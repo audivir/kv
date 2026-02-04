@@ -1,0 +1,148 @@
+// unit tests
+use super::*;
+use image::Rgba;
+use image::{DynamicImage, GenericImageView};
+use rstest::rstest;
+use std::io::Cursor;
+use std::path::PathBuf;
+
+const WHITE: Rgba<u8> = Rgba([255, 255, 255, 255]);
+const BLACK: Rgba<u8> = Rgba([0, 0, 0, 255]);
+const TRANSPARENT: Rgba<u8> = Rgba([0, 0, 0, 0]);
+
+const PNG_DATA: &[u8] = include_bytes!("../fixtures/test.png");
+const SVG_DATA: &[u8] = include_bytes!("../fixtures/test.svg");
+
+// get_term_width_pixels
+// TODO: implement test
+
+#[rstest]
+#[case("FF0000", Rgba([255, 0, 0, 255]))]
+#[case("00FF00", Rgba([0, 255, 0, 255]))]
+#[case("0000FF", Rgba([0, 0, 255, 255]))]
+#[case("FFFFFF", Rgba([255, 255, 255, 255]))]
+#[case("000000", Rgba([0, 0, 0, 255]))]
+fn test_parse_color(#[case] color: &str, #[case] expected: Rgba<u8>) {
+    let result = parse_color(color);
+    assert!(result.is_ok());
+    assert_eq!(result.unwrap(), expected);
+}
+
+#[rstest]
+#[case("FF00")]
+#[case("FF000000")]
+#[case("FF00GG")]
+fn test_parse_color_invalid(#[case] color: &str) {
+    let result = parse_color(color);
+    assert!(result.is_err());
+}
+
+#[rstest]
+#[case(WHITE, TRANSPARENT, WHITE)]
+#[case(BLACK, TRANSPARENT, BLACK)]
+#[case(WHITE, BLACK, BLACK)]
+#[case(WHITE, Rgba([255, 0, 0, 128]), Rgba([255, 127, 127, 255]))]
+#[case(BLACK, Rgba([255, 0, 0, 128]), Rgba([128, 0, 0, 255]))]
+fn test_add_background(
+    #[case] color: Rgba<u8>,
+    #[case] src_pixel: Rgba<u8>,
+    #[case] expected_pixel: Rgba<u8>,
+) {
+    let mut img = DynamicImage::new_rgba8(1, 1); // 1x1 pixel
+    img.as_mut_rgba8().unwrap().put_pixel(0, 0, src_pixel); // black, 100% alpha
+
+    img = add_background(&img, &color);
+
+    let pixel = img.get_pixel(0, 0);
+    assert_eq!(
+        pixel, expected_pixel,
+        "Background color not applied correctly"
+    );
+}
+
+#[rstest]
+#[case(100, 50, Some(50), None, false, false, 50, 25)] // explicit width
+#[case(100, 50, None, Some(25), false, false, 50, 25)] // explicit height
+#[case(1000, 500, None, None, false, false, 100, 50)] // auto-downscale
+#[case(50, 25, None, None, true, false, 100, 50)] // fullwidth
+#[case(1000, 500, None, None, false, true, 1000, 500)] // noresize
+fn test_calculate_dimensions(
+    #[case] img_w: u32,
+    #[case] img_h: u32,
+    #[case] conf_w: Option<u32>,
+    #[case] conf_h: Option<u32>,
+    #[case] fullwidth: bool,
+    #[case] noresize: bool,
+    #[case] expected_w: u32,
+    #[case] expected_h: u32,
+) {
+    let img_dims = (img_w, img_h);
+    let term_width = 100; // fixed
+
+    let (w, h) = calculate_dimensions(img_dims, conf_w, conf_h, fullwidth, noresize, term_width);
+
+    assert_eq!(w, expected_w);
+    assert_eq!(h, expected_h);
+}
+
+#[test]
+fn test_render_svg() {
+    let result = render_svg(SVG_DATA);
+    assert!(result.is_ok(), "SVG generation failed");
+
+    let img = result.unwrap();
+    assert_eq!(img.width(), 1);
+    assert_eq!(img.height(), 1);
+
+    let pixel = img.get_pixel(0, 0);
+    assert_eq!(pixel, Rgba([102, 102, 102, 255]));
+}
+
+#[test]
+fn test_render_svg_invalid() {
+    let svg_data = br#"<svg>invalid"#;
+
+    let result = render_svg(svg_data);
+    assert!(result.is_err(), "SVG generation failed");
+}
+
+#[rstest]
+#[case(PathBuf::from("fixtures/test.svg"))]
+#[case(PathBuf::from("fixtures/test.png"))]
+fn test_load_file(#[case] path: PathBuf) {
+    let result = load_file(&path);
+    assert!(result.is_ok());
+}
+
+#[rstest]
+#[case(PathBuf::from("nonexistent"), Some("Failed to open file"))]
+#[case(PathBuf::from("fixtures/test.random"), Some("Failed to load image"))]
+fn test_load_file_invalid(#[case] path: PathBuf, #[case] err_msg: Option<&str>) {
+    let result = load_file(&path);
+    assert!(result.is_err());
+    assert_eq!(result.unwrap_err().to_string(), err_msg.unwrap());
+}
+
+#[rstest]
+#[case("fixtures/test.svg".as_bytes())]
+#[case(SVG_DATA)]
+#[case("fixtures/test.png".as_bytes())]
+#[case(PNG_DATA)]
+fn test_load_stream(#[case] data: &[u8]) {
+    let result = load_stream(Cursor::new(data));
+    assert!(result.is_ok());
+}
+
+#[rstest]
+#[case("nonexistent".as_bytes(), Some("Failed to decode input: The image format could not be determined"))]
+#[case("invalidbinary\x00\x01\x02\x03".as_bytes(), Some("Failed to decode input: The image format could not be determined"))]
+#[case("<svg>invalid".as_bytes(), Some("Failed to parse SVG"))]
+#[case(
+    b"",
+    Some("Failed to decode input: The image format could not be determined")
+)]
+fn test_load_stream_invalid(#[case] data: &[u8], #[case] err_msg: Option<&str>) {
+    let result = load_stream(Cursor::new(data));
+    assert!(result.is_err());
+    assert_eq!(result.unwrap_err().to_string(), err_msg.unwrap());
+}
