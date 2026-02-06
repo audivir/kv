@@ -55,7 +55,7 @@ rpix -f image.png
 | `-b`, `--background` | Add a background (useful for transparent PNGs/SVGs).   |
 | `-C`, `--color`      | Set background color. Default: white.                  |
 | `-m`, `--mode`       | Set transmission mode (png, zlib, raw). Default: png.  |
-| `-i`, `--input-type` | Set input type (auto, image, svg, pdf). Default: auto. |
+| `-i`, `--input`      | Set input type (auto, image, svg, pdf). Default: auto. |
 | `-p`, `--printname`  | Print the filename before the image.                   |
 | `-t`, `--tty`        | Force tty (ignore stdin check).                        |
 | `-c`, `--clear`      | Clear the terminal (remove all images).                |

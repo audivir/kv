@@ -106,9 +106,22 @@ pub fn calculate_dimensions(
     let mut width = conf_w.unwrap_or(0) as f64;
     let mut height = conf_h.unwrap_or(0) as f64;
 
+    let mut use_resize = resize;
     let mut use_fullwidth = fullwidth;
     let mut use_fullheight = fullheight;
-    if resize {
+
+    // if neither noresize nor fullwidth nor fullheight is set,
+    // then resize if the image is larger than the terminal
+    if !noresize
+        && !use_fullwidth
+        && !use_fullheight
+        && ((orig_w > term_width.into() && term_width > 0)
+            || (orig_h > term_height.into() && term_height > 0))
+    {
+        use_resize = true;
+    }
+
+    if use_resize {
         let aspect_w = orig_w / orig_h;
         let aspect_h = orig_h / orig_w;
         if aspect_w > aspect_h {
@@ -118,19 +131,20 @@ pub fn calculate_dimensions(
         }
     }
 
+    // if width or height is set, use it
     if width > 0.0 && height == 0.0 {
         height = orig_h * (width / orig_w);
     } else if height > 0.0 && width == 0.0 {
         width = orig_w * (height / orig_h);
+    // use full terminal width, scale height by aspect ratio
     } else if use_fullwidth {
         width = term_width.into();
         height = orig_h * (width / orig_w);
+    // use full terminal height, scale width by aspect ratio
     } else if use_fullheight {
         height = term_height.into();
         width = orig_w * (height / orig_h);
-    } else if orig_w > term_width.into() && !noresize && term_width > 0 {
-        width = term_width.into();
-        height = orig_h * (width / orig_w);
+    // use original size
     } else {
         width = orig_w;
         height = orig_h;
@@ -165,10 +179,14 @@ pub fn render_svg(data: &[u8]) -> Result<DynamicImage> {
 }
 
 fn render_pdf(data: &[u8]) -> Result<DynamicImage> {
+    // libraries to look for ./, ./pdfium/, /opt/homebrew/lib, /usr/local/lib, /usr/local/pdfium/lib
     let pdfium = Pdfium::new(
         Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("./"))
-            .or_else(|_| Pdfium::bind_to_system_library())
-            .context("Failed to bind to PDFium")?,
+            .or_else(|_| Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("./pdfium/")))
+            .or_else(|_| Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("/opt/homebrew/lib")))
+            // .or_else(|_| Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("/usr/local/lib"))) // is system path
+            .or_else(|_| Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("/usr/local/pdfium/lib")))
+            .or_else(|_| Pdfium::bind_to_system_library())?,
     );
 
     let document = pdfium.load_pdf_from_byte_slice(data, None)?;

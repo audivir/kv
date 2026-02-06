@@ -19,7 +19,7 @@ fn default_conf() -> Config {
         background: false,
         color: "FFFFFF".to_string(),
         mode: Mode::Png,
-        input_type: InputTypeOption::Auto,
+        input: InputTypeOption::Auto,
         printname: true, // default to true for tests
         tty: false,
         clear: false,
@@ -61,19 +61,24 @@ fn run_test(
     }
 }
 
-// --width, --height, --fullwidth, --noresize
+// --width, --height, --fullwidth, --fullheight, --resize, --noresize
 #[rstest]
-#[case(100, 50, Some(50), None, false, false, 50, 25)] // explicit width
-#[case(100, 50, None, Some(25), false, false, 50, 25)] // explicit height
-#[case(1000, 500, None, None, false, false, 100, 50)] // auto-downscale
-#[case(50, 25, None, None, true, false, 100, 50)] // fullwidth
-#[case(1000, 500, None, None, false, true, 1000, 500)] // noresize
+#[case(100, 50, Some(50), None, false, false, false, false, 50, 25)] // explicit width
+#[case(100, 50, None, Some(25), false, false, false, false, 50, 25)] // explicit height
+#[case(1000, 500, None, None, false, false, false, false, 100, 50)] // auto-downscale
+#[case(50, 50, None, None, true, false, false, false, 100, 100)] // fullwidth
+#[case(200, 25, None, None, false, true, false, false, 400, 50)] // fullheight
+#[case(500, 500, None, None, false, false, true, false, 50, 50)] // resize (bound by height)
+#[case(1000, 200, None, None, false, false, true, false, 100, 20)] // resize (bound by width)
+#[case(1000, 500, None, None, false, false, false, true, 1000, 500)] // noresize
 fn test_resize(
     #[case] orig_width: u32,
     #[case] orig_height: u32,
     #[case] width: Option<u32>,
     #[case] height: Option<u32>,
     #[case] fullwidth: bool,
+    #[case] fullheight: bool,
+    #[case] resize: bool,
     #[case] noresize: bool,
     #[case] expected_width: u32,
     #[case] expected_height: u32,
@@ -87,10 +92,12 @@ fn test_resize(
     );
     let mut conf = default_conf();
     conf.mode = Mode::Raw; // to get width/height in output
-    conf.noresize = noresize;
-    conf.fullwidth = fullwidth;
     conf.width = width;
     conf.height = height;
+    conf.fullwidth = fullwidth;
+    conf.fullheight = fullheight;
+    conf.resize = resize;
+    conf.noresize = noresize;
     let expected_output = format!("\x1b_Ga=T,f=32,s={},v={}", expected_width, expected_height);
     run_test(
         conf,

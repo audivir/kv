@@ -62,7 +62,7 @@ struct Config {
 
     /// Specify image height
     #[arg(
-        short = 'H',
+        short = 'H', // else conflicts with --help
         long,
         conflicts_with = "width",
         conflicts_with = "fullwidth",
@@ -132,7 +132,7 @@ struct Config {
 
     /// Input type
     #[arg(short = 'i', long, value_enum, default_value_t = InputTypeOption::Auto)]
-    input_type: InputTypeOption,
+    input: InputTypeOption,
 
     /// Print file name
     #[arg(short = 'p', long)]
@@ -247,7 +247,7 @@ fn run(
     term_size: (u32, u32),
     is_input_available: bool,
 ) -> Result<i32> {
-    let input_type: InputType = conf.input_type.to_owned().into();
+    let input_type: InputType = conf.input.to_owned().into();
 
     if conf.clear {
         write!(writer, "\x1b_Ga=d\x1b\\")?;
