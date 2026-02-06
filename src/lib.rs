@@ -1,9 +1,9 @@
 use anyhow::{Context, Result};
-use image::{GenericImage, DynamicImage, Rgba, RgbaImage};
+use image::{DynamicImage, GenericImage, Rgba, RgbaImage};
+use pdfium_render::prelude::{PdfRenderConfig, Pdfium};
 use std::fs::File;
-use std::io::{Read};
+use std::io::Read;
 use std::path::PathBuf;
-use pdfium_render::prelude::{Pdfium, PdfRenderConfig};
 
 #[cfg(test)]
 mod tests_lib;
@@ -17,21 +17,20 @@ pub enum InputType {
 }
 
 pub fn get_term_width_pixels() -> u32 {
-   
     if let Ok(size) = crossterm::terminal::window_size() {
         // try raw pixels
         if size.width > 0 {
             return size.width as u32;
         }
-        
+
         // fallback: if 0 pixels, estimate based on columns
         if size.columns > 0 {
-            return size.columns as u32 * 10; 
+            return size.columns as u32 * 10;
         }
     }
-    
+
     // ultimate fallback
-    800 
+    800
 }
 
 pub fn parse_color(color: &str) -> Result<Rgba<u8>> {
@@ -111,7 +110,6 @@ pub fn calculate_dimensions(
     (width, height)
 }
 
-
 pub fn render_svg(data: &[u8]) -> Result<DynamicImage> {
     // load system fonts
     let mut fontdb = usvg::fontdb::Database::new();
@@ -129,11 +127,7 @@ pub fn render_svg(data: &[u8]) -> Result<DynamicImage> {
     let mut pixmap = tiny_skia::Pixmap::new(size.width(), size.height())
         .ok_or_else(|| anyhow::anyhow!("Failed to create pixmap"))?;
 
-    resvg::render(
-        &tree,
-        tiny_skia::Transform::default(),
-        &mut pixmap.as_mut()
-    );
+    resvg::render(&tree, tiny_skia::Transform::default(), &mut pixmap.as_mut());
 
     // convert to DynamicImage
     let buffer = RgbaImage::from_raw(size.width(), size.height(), pixmap.data().to_vec())
@@ -145,7 +139,7 @@ pub fn render_svg(data: &[u8]) -> Result<DynamicImage> {
 fn render_pdf(data: &[u8]) -> Result<DynamicImage> {
     let pdfium = Pdfium::new(
         Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("./"))
-            .or_else(|_| Pdfium::bind_to_system_library())? //.context("Failed to bind to PDFium")?
+            .or_else(|_| Pdfium::bind_to_system_library())?, //.context("Failed to bind to PDFium")?
     );
 
     let document = pdfium.load_pdf_from_byte_slice(data, None)?;
@@ -153,12 +147,11 @@ fn render_pdf(data: &[u8]) -> Result<DynamicImage> {
     let mut images: Vec<DynamicImage> = Vec::new();
 
     for page in document.pages().iter() {
-        let bitmap = page
-            .render_with_config(
-                &PdfRenderConfig::new()
-                    .set_target_width(2000)
-                    .render_form_data(true),
-            )?;
+        let bitmap = page.render_with_config(
+            &PdfRenderConfig::new()
+                .set_target_width(2000)
+                .render_form_data(true),
+        )?;
 
         let image = bitmap.as_image();
 
@@ -198,7 +191,11 @@ pub fn load_data(data: Vec<u8>, input_type: InputType, extension: &str) -> Resul
         return image::load_from_memory(&data).context("Failed to load image");
     }
 
-    if input_type == InputType::Svg || extension == "svg" || data.starts_with(b"<svg") || data.starts_with(b"<?xml") {
+    if input_type == InputType::Svg
+        || extension == "svg"
+        || data.starts_with(b"<svg")
+        || data.starts_with(b"<?xml")
+    {
         return render_svg(&data);
     }
 
