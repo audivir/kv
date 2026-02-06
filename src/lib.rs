@@ -184,7 +184,7 @@ fn render_pdf(data: &[u8]) -> Result<DynamicImage> {
         Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("./"))
             .or_else(|_| Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("./pdfium/")))
             .or_else(|_| Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("/opt/homebrew/lib")))
-            // .or_else(|_| Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("/usr/local/lib"))) // is system path
+            .or_else(|_| Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("/usr/local/lib")))
             .or_else(|_| Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("/usr/local/pdfium/lib")))
             .or_else(|_| Pdfium::bind_to_system_library())?,
     );
