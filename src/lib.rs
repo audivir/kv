@@ -16,21 +16,31 @@ pub enum InputType {
     Pdf,
 }
 
-pub fn get_term_width_pixels() -> u32 {
+pub fn get_term_size() -> (u32, u32) {
+    let mut width = 800; // ultimate fallback
+    let mut height = 400; // ultimate fallback
     if let Ok(size) = crossterm::terminal::window_size() {
         // try raw pixels
-        if size.width > 0 {
-            return size.width as u32;
-        }
-
         // fallback: if 0 pixels, estimate based on columns
-        if size.columns > 0 {
-            return size.columns as u32 * 10;
+        let cols = size.columns as u32;
+        let rows = size.rows as u32;
+
+        if size.width > 0 {
+            width = size.width as u32;
+        } else if cols > 0 {
+            width = cols * 10;
+        }
+        // if possible adjust for the new prompt line and the empty line after the image
+        if size.height > 0 {
+            height = size.height as u32;
+            if cols > 0 {
+                height = height * (rows - 2) / rows;
+            }
+        } else if rows > 0 {
+            height = (rows - 2) * 20;
         }
     }
-
-    // ultimate fallback
-    800
+    (width, height)
 }
 
 pub fn parse_color(color: &str) -> Result<Rgba<u8>> {
@@ -86,28 +96,46 @@ pub fn calculate_dimensions(
     conf_w: Option<u32>,
     conf_h: Option<u32>,
     fullwidth: bool,
+    fullheight: bool,
+    resize: bool,
     noresize: bool,
     term_width: u32,
+    term_height: u32,
 ) -> (u32, u32) {
-    let (orig_w, orig_h) = img_dims;
-    let mut width = conf_w.unwrap_or(0);
-    let mut height = conf_h.unwrap_or(0);
+    let (orig_w, orig_h) = (img_dims.0 as f64, img_dims.1 as f64);
+    let mut width = conf_w.unwrap_or(0) as f64;
+    let mut height = conf_h.unwrap_or(0) as f64;
 
-    if width > 0 && height == 0 {
-        height = ((orig_h as f64 * (width as f64 / orig_w as f64)).round()) as u32;
-    } else if height > 0 && width == 0 {
-        width = ((orig_w as f64 * (height as f64 / orig_h as f64)).round()) as u32;
-    } else if fullwidth {
-        width = term_width;
-        height = ((orig_h as f64 * (width as f64 / orig_w as f64)).round()) as u32;
-    } else if orig_w > term_width && !noresize && term_width > 0 {
-        width = term_width;
-        height = ((orig_h as f64 * (width as f64 / orig_w as f64)).round()) as u32;
+    let mut use_fullwidth = fullwidth;
+    let mut use_fullheight = fullheight;
+    if resize {
+        let aspect_w = orig_w / orig_h;
+        let aspect_h = orig_h / orig_w;
+        if aspect_w > aspect_h {
+            use_fullwidth = true;
+        } else {
+            use_fullheight = true;
+        }
+    }
+
+    if width > 0.0 && height == 0.0 {
+        height = orig_h * (width / orig_w);
+    } else if height > 0.0 && width == 0.0 {
+        width = orig_w * (height / orig_h);
+    } else if use_fullwidth {
+        width = term_width.into();
+        height = orig_h * (width / orig_w);
+    } else if use_fullheight {
+        height = term_height.into();
+        width = orig_w * (height / orig_h);
+    } else if orig_w > term_width.into() && !noresize && term_width > 0 {
+        width = term_width.into();
+        height = orig_h * (width / orig_w);
     } else {
         width = orig_w;
         height = orig_h;
     }
-    (width, height)
+    (width.round() as u32, height.round() as u32)
 }
 
 pub fn render_svg(data: &[u8]) -> Result<DynamicImage> {

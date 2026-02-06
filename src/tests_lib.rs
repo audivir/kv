@@ -12,7 +12,7 @@ const TRANSPARENT: Rgba<u8> = Rgba([0, 0, 0, 0]);
 const PNG_DATA: &[u8] = include_bytes!("../fixtures/test.png");
 const SVG_DATA: &[u8] = include_bytes!("../fixtures/test.svg");
 
-// get_term_width_pixels
+// get_term_size
 // TODO: implement test
 
 #[rstest]
@@ -60,25 +60,50 @@ fn test_add_background(
 }
 
 #[rstest]
-#[case(100, 50, Some(50), None, false, false, 50, 25)] // explicit width
-#[case(100, 50, None, Some(25), false, false, 50, 25)] // explicit height
-#[case(1000, 500, None, None, false, false, 100, 50)] // auto-downscale
-#[case(50, 25, None, None, true, false, 100, 50)] // fullwidth
-#[case(1000, 500, None, None, false, true, 1000, 500)] // noresize
+#[case(100, 50, Some(50), None, false, false, false, false, 50, 25)] // explicit width
+#[case(100, 50, None, Some(25), false, false, false, false, 50, 25)] // explicit height
+#[case(1000, 500, None, None, false, false, false, false, 100, 50)] // auto-downscale
+#[case(50, 50, None, None, true, false, false, false, 100, 100)] // fullwidth
+#[case(200, 25, None, None, false, true, false, false, 400, 50)] // fullheight
+#[case(500, 500, None, None, false, false, true, false, 50, 50)] // resize (bound by height)
+#[case(1000, 200, None, None, false, false, true, false, 100, 20)] // resize (bound by width)
+#[case(1000, 500, None, None, false, false, false, true, 1000, 500)] // noresize
 fn test_calculate_dimensions(
     #[case] img_w: u32,
     #[case] img_h: u32,
     #[case] conf_w: Option<u32>,
     #[case] conf_h: Option<u32>,
     #[case] fullwidth: bool,
+    #[case] fullheight: bool,
+    #[case] resize: bool,
     #[case] noresize: bool,
     #[case] expected_w: u32,
     #[case] expected_h: u32,
 ) {
     let img_dims = (img_w, img_h);
     let term_width = 100; // fixed
+    let term_height = 50; // fixed
 
-    let (w, h) = calculate_dimensions(img_dims, conf_w, conf_h, fullwidth, noresize, term_width);
+    // quick sanity check for exclusive options
+    assert!(!(fullwidth && fullheight));
+    assert!(!(resize && noresize));
+    assert!(!((resize || noresize) && (fullwidth || fullheight)));
+    assert!(
+        !((conf_w.is_some() || conf_h.is_some())
+            && (fullwidth || fullheight || resize || noresize))
+    );
+
+    let (w, h) = calculate_dimensions(
+        img_dims,
+        conf_w,
+        conf_h,
+        fullwidth,
+        fullheight,
+        resize,
+        noresize,
+        term_width,
+        term_height,
+    );
 
     assert_eq!(w, expected_w);
     assert_eq!(h, expected_h);

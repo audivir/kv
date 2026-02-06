@@ -49,19 +49,73 @@ struct Config {
     files: Vec<PathBuf>,
 
     /// Specify image width
-    #[arg(short = 'w', long)]
+    #[arg(
+        short = 'w',
+        long,
+        conflicts_with = "height",
+        conflicts_with = "fullwidth",
+        conflicts_with = "fullheight",
+        conflicts_with = "resize",
+        conflicts_with = "noresize"
+    )]
     width: Option<u32>,
 
     /// Specify image height
-    #[arg(long)]
+    #[arg(
+        short = 'H',
+        long,
+        conflicts_with = "width",
+        conflicts_with = "fullwidth",
+        conflicts_with = "fullheight",
+        conflicts_with = "resize",
+        conflicts_with = "noresize"
+    )]
     height: Option<u32>,
 
     /// Resize image to fill terminal width
-    #[arg(short = 'f', long)]
+    #[arg(
+        short = 'f',
+        long,
+        conflicts_with = "width",
+        conflicts_with = "height",
+        conflicts_with = "resize",
+        conflicts_with = "noresize"
+    )]
     fullwidth: bool,
 
+    /// Resize image to fill terminal height
+    #[arg(
+        short = 'F',
+        long,
+        conflicts_with = "width",
+        conflicts_with = "height",
+        conflicts_with = "resize",
+        conflicts_with = "noresize"
+    )]
+    fullheight: bool,
+
+    /// Resize image to fill terminal
+    #[arg(
+        short = 'r',
+        long,
+        conflicts_with = "width",
+        conflicts_with = "height",
+        conflicts_with = "fullwidth",
+        conflicts_with = "fullheight",
+        conflicts_with = "noresize"
+    )]
+    resize: bool,
+
     /// Disable automatic resizing
-    #[arg(short = 'n', long)]
+    #[arg(
+        short = 'n',
+        long,
+        conflicts_with = "width",
+        conflicts_with = "height",
+        conflicts_with = "fullwidth",
+        conflicts_with = "fullheight",
+        conflicts_with = "resize"
+    )]
     noresize: bool,
 
     /// Add background if image is transparent
@@ -97,15 +151,18 @@ fn render_image(
     mut writer: impl Write,
     img: DynamicImage,
     conf: &Config,
-    term_width: u32,
+    term_size: (u32, u32),
 ) -> Result<()> {
     let (w, h) = calculate_dimensions(
         img.dimensions(),
         conf.width,
         conf.height,
         conf.fullwidth,
+        conf.fullheight,
+        conf.resize,
         conf.noresize,
-        term_width,
+        term_size.0,
+        term_size.1,
     );
     let mut final_img = img;
 
@@ -187,7 +244,7 @@ fn run(
     mut err_writer: impl Write,
     mut reader: impl Read,
     conf: Config,
-    term_width: u32,
+    term_size: (u32, u32),
     is_input_available: bool,
 ) -> Result<i32> {
     let input_type: InputType = conf.input_type.to_owned().into();
@@ -207,7 +264,7 @@ fn run(
         let mut data = Vec::new();
         reader.read_to_end(&mut data)?;
         let img = load_data(data, input_type, "")?;
-        render_image(writer, img, &conf, term_width)?;
+        render_image(writer, img, &conf, term_size)?;
     } else if !conf.files.is_empty() {
         let mut exit_code = 0;
         for path in &conf.files {
@@ -216,7 +273,7 @@ fn run(
             }
             match load_file(path, input_type) {
                 Ok(img) => {
-                    if let Err(e) = render_image(&mut writer, img, &conf, term_width) {
+                    if let Err(e) = render_image(&mut writer, img, &conf, term_size) {
                         writeln!(err_writer, "Error rendering {}: {}", path.display(), e)?;
                         exit_code = 1;
                     }
@@ -241,7 +298,7 @@ fn run(
 
 fn main() -> Result<()> {
     let conf = Config::parse();
-    let term_width = get_term_width_pixels();
+    let term_size = get_term_size();
 
     // Detect TTY status
     let is_input_available = atty::isnt(atty::Stream::Stdin);
@@ -251,7 +308,7 @@ fn main() -> Result<()> {
         io::stderr(),
         io::stdin(),
         conf,
-        term_width,
+        term_size,
         is_input_available,
     )?;
     std::process::exit(code);

@@ -13,6 +13,8 @@ fn default_conf() -> Config {
         width: None,
         height: None,
         fullwidth: false,
+        fullheight: false,
+        resize: false,
         noresize: false,
         background: false,
         color: "FFFFFF".to_string(),
@@ -32,7 +34,7 @@ fn run_test(
     expected_error: &str,
     expected_code: i32,
     contains: bool,
-    term_width: u32,
+    term_size: (u32, u32),
 ) {
     let mut output = Vec::new();
     let mut error_output = Vec::new();
@@ -41,7 +43,7 @@ fn run_test(
         &mut error_output,
         input,
         conf,
-        term_width,
+        term_size,
         is_input_available,
     )
     .unwrap();
@@ -98,7 +100,7 @@ fn test_resize(
         "stdin\n",
         0,
         true,
-        100,
+        (100, 50),
     );
 }
 
@@ -127,7 +129,7 @@ fn test_force_tty(
             expected_error,
             0,
             true,
-            800,
+            (800, 400),
         );
     } else {
         run_test(
@@ -138,7 +140,7 @@ fn test_force_tty(
             expected_error,
             1,
             false,
-            800,
+            (800, 400),
         );
     }
 }
@@ -158,7 +160,7 @@ fn test_printname(#[values(false, true)] printname: bool) {
         expected_error,
         0,
         true,
-        800,
+        (800, 400),
     );
 }
 
@@ -182,7 +184,7 @@ fn test_clear(
         "",
         0,
         false,
-        800,
+        (800, 400),
     );
 }
 
@@ -204,7 +206,7 @@ fn test_stdin(
         "stdin\n",
         0,
         true,
-        800,
+        (800, 400),
     );
 }
 
@@ -219,7 +221,7 @@ fn test_no_input() {
         NO_FILES_MSG,
         1,
         false,
-        800,
+        (800, 400),
     );
 }
 
@@ -242,6 +244,6 @@ fn test_files(
         expected_error,
         expected_code,
         true,
-        800,
+        (800, 400),
     );
 }

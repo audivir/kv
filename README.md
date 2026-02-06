@@ -47,8 +47,10 @@ rpix -f image.png
 | Flag                 | Description                                            |
 | -------------------- | ------------------------------------------------------ |
 | `-w`, `--width`      | Specify image width in pixels.                         |
-| `--height`           | Specify image height in pixels.                        |
+| `-H`, `--height`     | Specify image height in pixels.                        |
 | `-f`, `--fullwidth`  | Resize image to fill the terminal width.               |
+| `-F`, `--fullheight` | Resize image to fill the terminal height.              |
+| `-r`, `--resize`     | Resize image to fill the terminal.                     |
 | `-n`, `--noresize`   | Disable automatic resizing (show original size).       |
 | `-b`, `--background` | Add a background (useful for transparent PNGs/SVGs).   |
 | `-C`, `--color`      | Set background color. Default: white.                  |
