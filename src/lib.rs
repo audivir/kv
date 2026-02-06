@@ -16,6 +16,23 @@ pub enum InputType {
     Pdf,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum HtmlDriver {
+    Auto,
+    Browser,
+    Render,
+}
+
+pub struct RpixContext {
+    pub input_type: InputType,
+    pub driver: HtmlDriver,
+    pub conf_w: Option<u32>,
+    pub conf_h: Option<u32>,
+    pub term_width: u32,
+    pub term_height: u32,
+    pub page_indices: Option<Vec<u16>>,
+}
+
 pub fn get_term_size() -> (u32, u32) {
     let mut width = 800; // ultimate fallback
     let mut height = 400; // ultimate fallback
@@ -203,8 +220,10 @@ pub fn render_svg(data: &[u8]) -> Result<DynamicImage> {
     fontdb.load_system_fonts();
 
     // configure options
-    let mut opt = usvg::Options::default();
-    opt.fontdb = std::sync::Arc::new(fontdb);
+    let opt = usvg::Options {
+        fontdb: std::sync::Arc::new(fontdb),
+        ..Default::default()
+    };
 
     // parse the SVG
     let tree = usvg::Tree::from_data(data, &opt).context("Failed to parse SVG")?;
@@ -264,7 +283,7 @@ fn render_pdf(
 
     let document = pdfium.load_pdf_from_byte_slice(data, None)?;
     let pages = document.pages();
-    let n_pages = pages.len() as u16;
+    let n_pages = pages.len();
     let selected_indices = if let Some(page_indices) = page_indices {
         // if any >= pages.len(), raise error
         if page_indices.iter().any(|&i| i >= n_pages) {
@@ -304,12 +323,10 @@ fn render_pdf(
     Ok(DynamicImage::ImageRgba8(combined))
 }
 
+
 pub fn load_file(
+    ctx: &RpixContext,
     path: &PathBuf,
-    input_type: InputType,
-    conf_w: Option<u32>,
-    term_width: u32,
-    page_indices: Option<Vec<u16>>,
 ) -> Result<DynamicImage> {
     let mut file = File::open(path).context("Failed to open file")?;
     let mut data = Vec::new();
@@ -317,28 +334,22 @@ pub fn load_file(
 
     let extension = path.extension().map_or("", |e| e.to_str().unwrap_or(""));
     load_data(
+        ctx,
         data,
-        input_type,
         extension,
-        conf_w,
-        term_width,
-        page_indices,
     )
 }
 
 pub fn load_data(
+    ctx: &RpixContext,
     data: Vec<u8>,
-    input_type: InputType,
     extension: &str,
-    conf_w: Option<u32>,
-    term_width: u32,
-    page_indices: Option<Vec<u16>>,
 ) -> Result<DynamicImage> {
-    if input_type == InputType::Image {
+    if ctx.input_type == InputType::Image {
         return image::load_from_memory(&data).context("Failed to load image");
     }
 
-    if input_type == InputType::Svg
+    if ctx.input_type == InputType::Svg
         || extension == "svg"
         || data.starts_with(b"<svg")
         || data.starts_with(b"<?xml")
@@ -346,9 +357,13 @@ pub fn load_data(
         return render_svg(&data);
     }
 
-    if input_type == InputType::Pdf || extension == "pdf" || data.starts_with(b"%PDF") {
-        return render_pdf(&data, conf_w, term_width, page_indices);
+    if ctx.input_type == InputType::Pdf || extension == "pdf" || data.starts_with(b"%PDF") {
+        return render_pdf(&data, ctx.conf_w, ctx.term_width, ctx.page_indices.clone());
     }
+
+    // if input_type == InputType::Html || extension == "html" || extension == "htm" || data.starts_with(b"<html") || data.starts_with(b"<!DOCTYPE html>") {
+    //     return html::render_html_auto(&data, ctx.driver, ctx.conf_w, ctx.conf_h, ctx.term_width, ctx.term_height);
+    // }
 
     // fallback for input_type == InputType::Auto
     match image::load_from_memory(&data) {
@@ -358,7 +373,7 @@ pub fn load_data(
                 let path_str = text.trim();
                 let path = PathBuf::from(path_str);
                 if path.exists() && path.is_file() {
-                    return load_file(&path, input_type, conf_w, term_width, page_indices);
+                    return load_file(ctx, &path);
                 }
             }
             Err(anyhow::anyhow!("Failed to decode input: {}", err))

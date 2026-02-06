@@ -13,6 +13,17 @@ const PNG_DATA: &[u8] = include_bytes!("../fixtures/test.png");
 const SVG_DATA: &[u8] = include_bytes!("../fixtures/test.svg");
 const PDF_DATA: &[u8] = include_bytes!("../fixtures/test.pdf");
 
+fn default_ctx() -> RpixContext {
+    RpixContext {
+        input_type: InputType::Auto,
+        driver: HtmlDriver::Auto,
+        conf_w: None,
+        conf_h: None,
+        term_width: 100,
+        term_height: 50,
+        page_indices: None,
+    }
+}
 // get_term_size
 // TODO: implement test
 
@@ -205,9 +216,11 @@ fn test_render_pdf_out_of_range(#[case] page_indices: Vec<u16>) {
 #[case(PathBuf::from("fixtures/test.png"), InputType::Image)]
 #[case(PathBuf::from("fixtures/test.pdf"), InputType::Pdf)]
 fn test_load_file(#[case] path: PathBuf, #[case] input_type: InputType) {
-    let result = load_file(&path, input_type, None, 100, None);
+    let mut ctx = default_ctx();
+    ctx.input_type = input_type;
+    let result = load_file(&ctx, &path);
     assert!(result.is_ok());
-    let result_auto = load_file(&path, InputType::Auto, None, 100, None);
+    let result_auto = load_file(&ctx, &path);
     assert!(result_auto.is_ok());
 }
 
@@ -238,7 +251,9 @@ fn test_load_file_invalid(
     #[case] input_type: InputType,
     #[case] err_msg: &str,
 ) {
-    let result = load_file(&path, input_type, None, 100, None);
+    let mut ctx = default_ctx();
+    ctx.input_type = input_type;
+    let result = load_file(&ctx, &path);
     assert!(result.is_err());
     assert_eq!(result.unwrap_err().to_string(), err_msg);
 }
@@ -249,7 +264,8 @@ fn test_load_file_invalid(
 #[case("fixtures/test.png".as_bytes())]
 #[case(PNG_DATA)]
 fn test_load_data(#[case] data: &[u8]) {
-    let result = load_data(data.to_vec(), InputType::Auto, "", None, 100, None);
+    let ctx = default_ctx();
+    let result = load_data(&ctx, data.to_vec(), "");
     assert!(result.is_ok());
 }
 
@@ -262,7 +278,8 @@ fn test_load_data(#[case] data: &[u8]) {
     Some("Failed to decode input: The image format could not be determined")
 )]
 fn test_load_data_invalid(#[case] data: &[u8], #[case] err_msg: Option<&str>) {
-    let result = load_data(data.to_vec(), InputType::Auto, "", None, 100, None);
+    let ctx = default_ctx();
+    let result = load_data(&ctx, data.to_vec(), "");
     assert!(result.is_err());
     assert_eq!(result.unwrap_err().to_string(), err_msg.unwrap());
 }

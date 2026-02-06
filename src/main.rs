@@ -40,6 +40,23 @@ impl From<InputTypeOption> for InputType {
     }
 }
 
+#[derive(Debug, Clone, ValueEnum, PartialEq)]
+enum HtmlDriverOption {
+    Auto,
+    Browser,
+    Render,
+}
+
+impl From<HtmlDriverOption> for HtmlDriver {
+    fn from(arg: HtmlDriverOption) -> Self {
+        match arg {
+            HtmlDriverOption::Auto => HtmlDriver::Auto,
+            HtmlDriverOption::Browser => HtmlDriver::Browser,
+            HtmlDriverOption::Render => HtmlDriver::Render,
+        }
+    }
+}
+
 /// A image viewer for the Kitty Terminal Graphics Protocol.
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -139,6 +156,10 @@ struct Config {
     /// Select which PDF pages to render, forces input type to pdf (e.g. "1-3,34")
     #[arg(short = 'P', long, conflicts_with = "input")]
     pages: Option<String>,
+
+    /// HTML driver
+    #[arg(short = 'd', long, value_enum, default_value_t = HtmlDriverOption::Auto)]
+    driver: HtmlDriverOption,
 
     /// Print file name
     #[arg(short = 'p', long)]
@@ -278,13 +299,23 @@ fn run(
         let input_type = InputType::Pdf;
         (page_indices, input_type)
     } else {
-        (None, conf.input.to_owned().into())
+        (None, conf.input.clone().into())
+    };
+
+    let ctx = RpixContext {
+        input_type,
+        driver: conf.driver.clone().into(),
+        conf_w: conf.width,
+        conf_h: conf.height,
+        term_width: term_size.0,
+        term_height: term_size.1,
+        page_indices,
     };
 
     if use_stdin {
         let mut data = Vec::new();
         reader.read_to_end(&mut data)?;
-        let img = load_data(data, input_type, "", conf.width, term_size.0, page_indices)?;
+        let img = load_data(&ctx, data, "")?;
         if conf.printname {
             writeln!(err_writer, "stdin")?;
         }
@@ -292,13 +323,7 @@ fn run(
     } else if !conf.files.is_empty() {
         let mut exit_code = 0;
         for path in &conf.files {
-            match load_file(
-                path,
-                input_type,
-                conf.width,
-                term_size.0,
-                page_indices.clone(),
-            ) {
+            match load_file(&ctx, path) {
                 Ok(img) => {
                     if conf.printname {
                         writeln!(err_writer, "{}", path.display())?;
