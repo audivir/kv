@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use base64::{engine::general_purpose, Engine as _};
+use directories::ProjectDirs;
 use headless_chrome::protocol::cdp::Page::CaptureScreenshotFormatOption;
 use headless_chrome::{Browser, LaunchOptions};
 use image::{DynamicImage, GenericImage, Rgba, RgbaImage};
@@ -7,7 +8,6 @@ use pdfium_render::prelude::{PdfRenderConfig, Pdfium};
 use std::fs::File;
 use std::io::Read;
 use std::path::PathBuf;
-use directories::ProjectDirs;
 
 #[cfg(test)]
 mod tests_lib;
@@ -320,8 +320,8 @@ fn render_pdf(
 
 /// Returns the path to the chromium user data directory
 fn chromium_path() -> PathBuf {
-    let proj_dirs = ProjectDirs::from("org", "example", "rpix")
-        .expect("Could not determine XDG data dir");
+    let proj_dirs =
+        ProjectDirs::from("org", "example", "rpix").expect("Could not determine XDG data dir");
     let data_dir = proj_dirs.data_dir(); // typically $XDG_DATA_HOME/rpix
     data_dir.join("chromium")
 }

@@ -55,7 +55,7 @@ rpix -f image.png
 | `-n`, `--noresize`   | Disable automatic resizing (show original size).                  |
 | `-b`, `--background` | Add a background (useful for transparent PNGs/SVGs).              |
 | `-C`, `--color`      | Set background color. Default: white.                             |
-| `-m`, `--mode`       | Set transmission mode (png, zlib, raw). Default: png.             |
+| `-m`, `--mode`       | Set transmission mode (kitty, kitty-raw, png). Default: kitty.    |
 | `-i`, `--input`      | Set input type (auto, image, svg, pdf, html). Default: auto.      |
 | `-P`, `--pages`      | Select pages to render (e.g. "1-3,34"), forces input type to pdf. |
 | `-p`, `--printname`  | Print the filename before the image.                              |

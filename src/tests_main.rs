@@ -18,7 +18,7 @@ fn default_conf() -> Config {
         noresize: false,
         background: false,
         color: "FFFFFF".to_string(),
-        mode: Mode::Png,
+        mode: Mode::Kitty,
         input: InputTypeOption::Auto,
         pages: None,
         printname: true, // default to true for tests
@@ -92,7 +92,7 @@ fn test_resize(
         orig_height
     );
     let mut conf = default_conf();
-    conf.mode = Mode::Raw; // to get width/height in output
+    conf.mode = Mode::KittyRaw; // to get width/height in output
     conf.width = width;
     conf.height = height;
     conf.fullwidth = fullwidth;

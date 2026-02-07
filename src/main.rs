@@ -16,9 +16,9 @@ mod tests_main;
 
 #[derive(Debug, Clone, ValueEnum, PartialEq)]
 enum Mode {
+    Kitty,
+    KittyRaw,
     Png,
-    Zlib,
-    Raw,
 }
 
 #[derive(Debug, Clone, ValueEnum, PartialEq)]
@@ -131,7 +131,7 @@ struct Config {
     color: String,
 
     /// Transmission mode
-    #[arg(short = 'm', long, value_enum, default_value_t = Mode::Png)]
+    #[arg(short = 'm', long, value_enum, default_value_t = Mode::Kitty)]
     mode: Mode,
 
     /// Input type
@@ -186,7 +186,7 @@ fn render_image(
     let payload: Vec<u8>;
     let header: String;
 
-    if conf.mode == Mode::Png {
+    if conf.mode == Mode::Png || conf.mode == Mode::Kitty {
         // encode as png
         let mut buffer = Vec::new();
         let encoder = image::codecs::png::PngEncoder::new(&mut buffer);
@@ -195,27 +195,27 @@ fn render_image(
 
         encoder.write_image(final_img.as_bytes(), width, height, color_type.into())?;
 
+        if conf.mode == Mode::Png {
+            // write the raw bytes
+            writer.write_all(&buffer)?;
+            return Ok(());
+        }
+
         payload = buffer;
 
         // f=100 (PNG), no width/height data
         header = "a=T,f=100,".to_string();
-    } else {
+    } else { // KittyRaw
         let (width, height) = final_img.dimensions();
         let raw_bytes = final_img.to_rgba8().into_raw();
 
-        if conf.mode == Mode::Raw {
-            payload = raw_bytes;
-            // f=32 (RGBA)
-            header = format!("a=T,f=32,s={},v={},", width, height);
-        } else {
-            // compress with zlib
-            let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
-            encoder.write_all(&raw_bytes)?;
-            payload = encoder.finish()?;
+        // compress with zlib
+        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(&raw_bytes)?;
+        payload = encoder.finish()?;
 
-            // f=32 (RGBA), o=z (compressed)
-            header = format!("a=T,f=32,s={},v={},o=z,", width, height);
-        }
+        // f=32 (RGBA), o=z (compressed)
+        header = format!("a=T,f=32,s={},v={},o=z,", width, height);
     }
 
     // base64 encode payload
@@ -260,6 +260,11 @@ fn run(
 
     // If -t is passed, we ignore stdin even if input is available
     let use_stdin = is_input_available && !conf.tty;
+
+    if conf.mode == Mode::Png && !use_stdin && conf.files.len() > 1 {
+        writeln!(err_writer, "Error: Cannot specify multiple files with --mode png")?;
+        return Ok(1);
+    }
 
     let (page_indices, input_type) = if let Some(pages) = conf.pages.clone() {
         if !use_stdin && conf.files.len() > 1 {
