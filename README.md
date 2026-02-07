@@ -6,6 +6,7 @@ A image viewer for the Kitty Terminal Graphics Protocol.
 
 - wider SVG support using `resvg`,
 - 16-bit PNG support,
+- HTML support using `headless_chrome`,
 - and PDF support using `pdfium`.
 
 ## Installation
@@ -55,7 +56,7 @@ rpix -f image.png
 | `-b`, `--background` | Add a background (useful for transparent PNGs/SVGs).              |
 | `-C`, `--color`      | Set background color. Default: white.                             |
 | `-m`, `--mode`       | Set transmission mode (png, zlib, raw). Default: png.             |
-| `-i`, `--input`      | Set input type (auto, image, svg, pdf). Default: auto.            |
+| `-i`, `--input`      | Set input type (auto, image, svg, pdf, html). Default: auto.      |
 | `-P`, `--pages`      | Select pages to render (e.g. "1-3,34"), forces input type to pdf. |
 | `-p`, `--printname`  | Print the filename before the image.                              |
 | `-t`, `--tty`        | Force tty (ignore stdin check).                                   |
