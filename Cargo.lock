@@ -2071,7 +2071,7 @@ dependencies = [
 
 [[package]]
 name = "rpix"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "atty",
@@ -2085,6 +2085,7 @@ dependencies = [
  "pdfium-render",
  "resvg",
  "rstest",
+ "tempfile",
  "tiny-skia",
  "usvg",
 ]

@@ -41,6 +41,12 @@ rpix -w 500 image.png
 
 # force full terminal width
 rpix -f image.png
+
+# view specific pages of a pdf file
+rpix -P 1-3,34 pdf.pdf
+
+# store a screenshot of an external domain as a png file
+rpix -o example.png https://example.org
 ```
 
 ### Options
@@ -55,7 +61,9 @@ rpix -f image.png
 | `-n`, `--noresize`   | Disable automatic resizing (show original size).                  |
 | `-b`, `--background` | Add a background (useful for transparent PNGs/SVGs).              |
 | `-C`, `--color`      | Set background color. Default: white.                             |
-| `-m`, `--mode`       | Set transmission mode (kitty, kitty-raw, png). Default: kitty.    |
+| `-m`, `--mode`       | Set transmission mode (png, zlib, raw). Default: png.             |
+| `-o`, `--output`     | Output to file as png, instead of kitty.                          |
+| `-x`, `--overwrite`  | Overwrite existing output file.                                   |
 | `-i`, `--input`      | Set input type (auto, image, svg, pdf, html). Default: auto.      |
 | `-P`, `--pages`      | Select pages to render (e.g. "1-3,34"), forces input type to pdf. |
 | `-p`, `--printname`  | Print the filename before the image.                              |

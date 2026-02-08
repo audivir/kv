@@ -1,6 +1,6 @@
 [package]
 name = "rpix"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2021"
 
 [dependencies]
@@ -17,6 +17,7 @@ atty = "0.2"
 pdfium-render = "0.8"
 headless_chrome = { version = "1.0", features = ["fetch"] }
 directories = "6.0.0"
+tempfile = "3.24.0"
 
 [dev-dependencies]
 rstest = "0.26.1"

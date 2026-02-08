@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use base64::{engine::general_purpose, Engine as _};
 use clap::{Parser, ValueEnum};
 use flate2::write::ZlibEncoder;
@@ -8,6 +8,7 @@ use image::{DynamicImage, GenericImageView, ImageEncoder};
 use rpix::*;
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
+use tempfile::NamedTempFile;
 
 const CHUNK_SIZE: usize = 4096;
 
@@ -16,9 +17,9 @@ mod tests_main;
 
 #[derive(Debug, Clone, ValueEnum, PartialEq)]
 enum Mode {
-    Kitty,
-    KittyRaw,
     Png,
+    Zlib,
+    Raw,
 }
 
 #[derive(Debug, Clone, ValueEnum, PartialEq)]
@@ -42,6 +43,7 @@ impl From<InputTypeOption> for InputType {
     }
 }
 
+type TempAndFinalOption = Option<(NamedTempFile, PathBuf)>;
 /// A image viewer for the Kitty Terminal Graphics Protocol.
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -131,8 +133,16 @@ struct Config {
     color: String,
 
     /// Transmission mode
-    #[arg(short = 'm', long, value_enum, default_value_t = Mode::Kitty)]
+    #[arg(short = 'm', long, value_enum, default_value_t = Mode::Png)]
     mode: Mode,
+
+    /// Output to file as png, instead of kitty
+    #[arg(short = 'o', long, conflicts_with = "mode")]
+    output: Option<String>,
+
+    /// Overwrite existing output file
+    #[arg(short = 'x', long, requires = "output")]
+    overwrite: bool,
 
     /// Input type
     #[arg(short = 'i', long, value_enum, default_value_t = InputTypeOption::Auto, conflicts_with = "pages")]
@@ -186,7 +196,7 @@ fn render_image(
     let payload: Vec<u8>;
     let header: String;
 
-    if conf.mode == Mode::Png || conf.mode == Mode::Kitty {
+    if conf.output.is_some() || conf.mode == Mode::Png {
         // encode as png
         let mut buffer = Vec::new();
         let encoder = image::codecs::png::PngEncoder::new(&mut buffer);
@@ -195,7 +205,7 @@ fn render_image(
 
         encoder.write_image(final_img.as_bytes(), width, height, color_type.into())?;
 
-        if conf.mode == Mode::Png {
+        if conf.output.is_some() {
             // write the raw bytes
             writer.write_all(&buffer)?;
             return Ok(());
@@ -205,14 +215,19 @@ fn render_image(
 
         // f=100 (PNG), no width/height data
         header = "a=T,f=100,".to_string();
-    } else { // KittyRaw
+    } else {
         let (width, height) = final_img.dimensions();
         let raw_bytes = final_img.to_rgba8().into_raw();
 
-        // compress with zlib
-        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
-        encoder.write_all(&raw_bytes)?;
-        payload = encoder.finish()?;
+        if conf.mode == Mode::Zlib {
+            // compress with zlib
+            let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+            encoder.write_all(&raw_bytes)?;
+            payload = encoder.finish()?;
+        } else {
+            // Raw
+            payload = raw_bytes;
+        }
 
         // f=32 (RGBA), o=z (compressed)
         header = format!("a=T,f=32,s={},v={},o=z,", width, height);
@@ -249,7 +264,7 @@ fn run(
     mut writer: impl Write,
     mut err_writer: impl Write,
     mut reader: impl Read,
-    conf: Config,
+    mut conf: Config,
     term_size: (u32, u32),
     is_input_available: bool,
 ) -> Result<i32> {
@@ -261,12 +276,15 @@ fn run(
     // If -t is passed, we ignore stdin even if input is available
     let use_stdin = is_input_available && !conf.tty;
 
-    if conf.mode == Mode::Png && !use_stdin && conf.files.len() > 1 {
-        writeln!(err_writer, "Error: Cannot specify multiple files with --mode png")?;
+    if conf.output.is_some() && !use_stdin && conf.files.len() > 1 {
+        writeln!(
+            err_writer,
+            "Error: Cannot specify multiple files with --output"
+        )?;
         return Ok(1);
     }
 
-    let (page_indices, input_type) = if let Some(pages) = conf.pages.clone() {
+    let page_indices = if let Some(pages) = conf.pages.clone() {
         if !use_stdin && conf.files.len() > 1 {
             writeln!(
                 err_writer,
@@ -280,14 +298,14 @@ fn run(
             writeln!(err_writer, "Error: Invalid page range")?;
             return Ok(1);
         };
-        let input_type = InputType::Pdf;
-        (page_indices, input_type)
+        conf.input = InputTypeOption::Pdf;
+        page_indices
     } else {
-        (None, conf.input.clone().into())
+        None
     };
 
     let ctx = RpixContext {
-        input_type,
+        input_type: conf.input.clone().into(),
         conf_w: conf.width,
         conf_h: conf.height,
         term_width: term_size.0,
@@ -334,6 +352,46 @@ fn run(
     Ok(0)
 }
 
+fn prepare_writer(
+    output: Option<String>,
+    overwrite: bool,
+) -> Result<(Box<dyn Write>, TempAndFinalOption)> {
+    match output {
+        Some(path_str) => {
+            let path = PathBuf::from(path_str);
+            // canonicalize path
+            let absolute_path = path.canonicalize()?;
+            let parent = absolute_path.parent().context("Invalid output path")?;
+
+            if !parent.exists() {
+                anyhow::bail!("Output directory does not exist: {}", parent.display());
+            }
+
+            if absolute_path.exists() && !overwrite {
+                anyhow::bail!(
+                    "Output file already exists: {} (use --overwrite)",
+                    path.display()
+                );
+            }
+
+            let tempfile = NamedTempFile::new_in(parent).context(format!(
+                "Failed to create temp file in {}",
+                parent.display()
+            ))?;
+
+            let writer: Box<dyn Write> = Box::new(
+                tempfile
+                    .as_file()
+                    .try_clone()
+                    .context("Failed to clone temp file")?,
+            );
+            Ok((writer, Some((tempfile, absolute_path))))
+        }
+
+        None => Ok((Box::new(io::stdout()), None)),
+    }
+}
+
 fn main() -> Result<()> {
     let conf = Config::parse();
     let term_size = get_term_size();
@@ -341,13 +399,23 @@ fn main() -> Result<()> {
     // Detect TTY status
     let is_input_available = atty::isnt(atty::Stream::Stdin);
 
+    let (writer, temp_output) = prepare_writer(conf.output.clone(), conf.overwrite)?;
+
     let code = run(
-        io::stdout(),
+        writer,
         io::stderr(),
         io::stdin(),
         conf,
         term_size,
         is_input_available,
     )?;
+
+    // Commit temp file only on success
+    if let Some((tempfile, final_path)) = temp_output {
+        if code == 0 {
+            tempfile.persist(final_path)?;
+        }
+    }
+
     std::process::exit(code);
 }

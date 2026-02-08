@@ -18,7 +18,9 @@ fn default_conf() -> Config {
         noresize: false,
         background: false,
         color: "FFFFFF".to_string(),
-        mode: Mode::Kitty,
+        mode: Mode::Png,
+        output: None,
+        overwrite: false,
         input: InputTypeOption::Auto,
         pages: None,
         printname: true, // default to true for tests
@@ -30,7 +32,7 @@ fn default_conf() -> Config {
 fn run_test(
     conf: Config,
     is_input_available: bool,
-    input: Cursor<Vec<u8>>,
+    input: Cursor<&[u8]>,
     expected_output: &str,
     expected_error: &str,
     expected_code: i32,
@@ -92,7 +94,7 @@ fn test_resize(
         orig_height
     );
     let mut conf = default_conf();
-    conf.mode = Mode::KittyRaw; // to get width/height in output
+    conf.mode = Mode::Raw; // to get width/height in output
     conf.width = width;
     conf.height = height;
     conf.fullwidth = fullwidth;
@@ -103,7 +105,7 @@ fn test_resize(
     run_test(
         conf,
         true,
-        Cursor::new(svg_data.into_bytes()),
+        Cursor::new(&svg_data.into_bytes()),
         &expected_output,
         "stdin\n",
         0,
@@ -117,6 +119,33 @@ fn test_resize(
 
 // --input
 // TODO: implement
+
+#[test]
+fn test_output() {
+    // get temp file path but do not create file
+    let temp_file = tempfile::NamedTempFile::new().unwrap();
+    let temp_file_path = temp_file.path().to_path_buf();
+
+    let mut conf = default_conf();
+    conf.files = vec!["fixtures/test.png".into()];
+    conf.output = Some(temp_file_path.to_str().unwrap().to_string());
+
+    let mut output = Vec::new();
+    let mut error_output = Vec::new();
+    let code = run(
+        &mut output,
+        &mut error_output,
+        Cursor::new(&[]),
+        conf,
+        (800, 400),
+        false,
+    )
+    .unwrap();
+    assert_eq!(code, 0);
+    let error_output_str = String::from_utf8(error_output).unwrap();
+    assert_eq!(error_output_str, "fixtures/test.png\n");
+    assert!(output.starts_with(b"\x89PNG"));
+}
 
 #[rstest]
 #[case(vec![],"0", false, "Error: Invalid page range\n")]
@@ -137,7 +166,7 @@ fn test_pages(
         run_test(
             conf,
             false,
-            Cursor::new(vec![]),
+            Cursor::new(&[]),
             "\x1b_Ga=T",
             expected_error,
             0,
@@ -148,7 +177,7 @@ fn test_pages(
         run_test(
             conf,
             false,
-            Cursor::new(vec![]),
+            Cursor::new(&[]),
             "",
             expected_error,
             1,
@@ -175,7 +204,7 @@ fn test_force_tty(
         run_test(
             conf,
             is_input_available,
-            Cursor::new(vec![]),
+            Cursor::new(&[]),
             "\x1b_Ga=T",
             expected_error,
             0,
@@ -186,7 +215,7 @@ fn test_force_tty(
         run_test(
             conf,
             is_input_available,
-            Cursor::new(vec![]),
+            Cursor::new(&[]),
             "",
             expected_error,
             1,
@@ -206,7 +235,7 @@ fn test_printname(#[values(false, true)] printname: bool) {
     run_test(
         conf,
         false,
-        Cursor::new(vec![]),
+        Cursor::new(&[]),
         "\x1b_Ga=T",
         expected_error,
         0,
@@ -230,7 +259,7 @@ fn test_clear(
     run_test(
         conf,
         is_input_available,
-        Cursor::new(vec![]),
+        Cursor::new(&[]),
         "\x1b_Ga=d\x1b\\",
         "",
         0,
@@ -244,7 +273,7 @@ fn test_clear(
 #[case(vec![])]
 #[case(vec!["fixtures/test.png".into()])]
 fn test_stdin(
-    #[values("fixtures/test.svg".into(), SVG_DATA.to_vec())] input_data: Vec<u8>,
+    #[values("fixtures/test.svg".as_bytes(), SVG_DATA)] input_data: &[u8],
     #[case] files: Vec<PathBuf>,
 ) {
     let mut conf = default_conf();
@@ -267,7 +296,7 @@ fn test_no_input() {
     run_test(
         conf,
         false,
-        Cursor::new(vec![]),
+        Cursor::new(&[]),
         "",
         NO_FILES_MSG,
         1,
@@ -290,7 +319,7 @@ fn test_files(
     run_test(
         conf,
         false,
-        Cursor::new(vec![]),
+        Cursor::new(&[]),
         "\x1b_Ga=T",
         expected_error,
         expected_code,
