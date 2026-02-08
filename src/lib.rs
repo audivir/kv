@@ -35,6 +35,7 @@ pub struct RpixContext {
     pub term_width: u32,
     pub term_height: u32,
     pub page_indices: Option<Vec<u16>>,
+    pub cache_dir: Option<PathBuf>,
 }
 
 pub fn get_term_size() -> (u32, u32) {
@@ -216,14 +217,22 @@ pub fn parse_pages(pages: &str) -> Result<Option<Vec<u16>>> {
     Ok(Some(result))
 }
 
-pub fn load_file(ctx: &RpixContext, path: &PathBuf) -> Result<DynamicImage> {
+// Load result is a enum
+#[derive(Debug)]
+pub enum LoadResult {
+    Image(DynamicImage),
+    Data(Vec<u8>),
+}
+
+pub fn load_file(ctx: &RpixContext, path: &PathBuf) -> Result<LoadResult> {
     let extension = path.extension().map_or("", |e| e.to_str().unwrap_or(""));
 
     #[cfg(feature = "html")]
     {
         let path_bytes = path.to_str().unwrap().as_bytes();
         if is_html(ctx, extension, path_bytes) {
-            return render_html_chrome(path_bytes);
+            let img = render_html_chrome(path_bytes)?;
+            return Ok(LoadResult::Image(img));
         }
     }
 
@@ -234,14 +243,15 @@ pub fn load_file(ctx: &RpixContext, path: &PathBuf) -> Result<DynamicImage> {
     load_data(ctx, &data, extension)
 }
 
-pub fn load_data(ctx: &RpixContext, data: &[u8], extension: &str) -> Result<DynamicImage> {
+pub fn load_data(ctx: &RpixContext, data: &[u8], extension: &str) -> Result<LoadResult> {
     if ctx.input_type == InputType::Text {
-        // not implemented yet
-        return Err(anyhow::anyhow!("Text input not implemented yet"));
+        return Ok(LoadResult::Data(data.to_vec()));
     }
 
     if ctx.input_type == InputType::Image {
-        return image::load_from_memory(data).context("Failed to load image");
+        return Ok(LoadResult::Image(
+            image::load_from_memory(data).context("Failed to load image")?,
+        ));
     }
 
     #[cfg(feature = "svg")]
@@ -250,17 +260,31 @@ pub fn load_data(ctx: &RpixContext, data: &[u8], extension: &str) -> Result<Dyna
         || data.starts_with(b"<svg")
         || data.starts_with(b"<?xml")
     {
-        return render_svg(data);
+        return Ok(LoadResult::Image(render_svg(data)?));
     }
 
     #[cfg(feature = "pdf")]
     if ctx.input_type == InputType::Pdf || extension == "pdf" || data.starts_with(b"%PDF") {
-        return render_pdf(data, ctx.conf_w, ctx.term_width, ctx.page_indices.clone());
+        return Ok(LoadResult::Image(render_pdf(
+            data,
+            ctx.conf_w,
+            ctx.term_width,
+            ctx.page_indices.clone(),
+        )?));
     }
 
     #[cfg(feature = "office")]
-    if ctx.input_type == InputType::Office || ["xlsx", "docx", "pptx"].contains(&extension) {
-        return render_office(data, extension, ctx.page_indices.clone());
+    if ctx.input_type == InputType::Office
+        || ["doc", "docx", "xls", "xlsx", "ppt", "pptx"].contains(&extension)
+    {
+        return Ok(LoadResult::Image(render_office(
+            data,
+            extension,
+            ctx.conf_w,
+            ctx.term_width,
+            ctx.page_indices.clone(),
+            ctx.cache_dir.as_deref(),
+        )?));
     }
 
     #[cfg(feature = "html")]
@@ -268,12 +292,12 @@ pub fn load_data(ctx: &RpixContext, data: &[u8], extension: &str) -> Result<Dyna
         || data.starts_with(b"<html")
         || data.starts_with(b"<!DOCTYPE html")
     {
-        return render_html_chrome(data);
+        return Ok(LoadResult::Image(render_html_chrome(data)?));
     }
 
     // fallback for input_type == InputType::Auto
     match image::load_from_memory(data) {
-        Ok(img) => Ok(img),
+        Ok(img) => Ok(LoadResult::Image(img)),
         Err(err) => {
             if let Ok(text) = std::str::from_utf8(data) {
                 let path_str = text.trim();
@@ -281,6 +305,7 @@ pub fn load_data(ctx: &RpixContext, data: &[u8], extension: &str) -> Result<Dyna
                 if path.exists() && path.is_file() {
                     return load_file(ctx, &path);
                 }
+                return Ok(LoadResult::Data(data.to_vec()));
             }
             Err(anyhow::anyhow!("Failed to decode input: {}", err))
         }

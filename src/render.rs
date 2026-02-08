@@ -1,18 +1,28 @@
 use anyhow::{Context, Result};
-use crate::InputType;
-use std::path::PathBuf;
-use crate::RpixContext;
+use image::{DynamicImage, GenericImage, RgbaImage};
+use std::path::Path;
+use std::process::{Command,Stdio};
+#[cfg(feature = "pdf")]
+use pdfium_render::prelude::{PdfRenderConfig, Pdfium};
+
+#[cfg(any(feature = "html", feature = "office"))]
+use directories::ProjectDirs;
+
+#[cfg(feature = "html")]
+use crate::{InputType, RpixContext};
 #[cfg(feature = "html")]
 use base64::{engine::general_purpose, Engine as _};
 #[cfg(feature = "html")]
-use directories::ProjectDirs;
+use std::path::PathBuf;
+
 #[cfg(feature = "html")]
 use headless_chrome::protocol::cdp::Page::CaptureScreenshotFormatOption;
 #[cfg(feature = "html")]
 use headless_chrome::{Browser, LaunchOptions};
-use image::{DynamicImage, GenericImage, RgbaImage};
-#[cfg(feature = "pdf")]
-use pdfium_render::prelude::{PdfRenderConfig, Pdfium};
+
+#[cfg(feature = "office")]
+use sha2::{Digest, Sha256};
+
 
 #[cfg(test)]
 mod tests_render;
@@ -114,11 +124,9 @@ pub fn render_pdf(
     Ok(DynamicImage::ImageRgba8(combined))
 }
 
-#[cfg(feature = "html")]
-fn chromium_path() -> PathBuf {
-    let proj_dirs =
-        ProjectDirs::from("org", "example", "rpix").expect("Could not determine XDG data dir");
-    proj_dirs.data_dir().join("chromium")
+#[cfg(any(feature = "html", feature = "office"))]
+fn proj_dirs() -> ProjectDirs {
+    ProjectDirs::from("org", "example", "rpix").expect("Could not determine XDG directories")
 }
 
 #[cfg(feature = "html")]
@@ -154,7 +162,7 @@ pub fn render_html_chrome(data: &[u8]) -> Result<DynamicImage> {
         }
     };
 
-    let user_data_dir = chromium_path();
+    let user_data_dir = proj_dirs().data_dir().join("chromium");
     std::fs::create_dir_all(&user_data_dir)?;
     let browser = Browser::new(LaunchOptions {
         headless: true,
@@ -173,143 +181,46 @@ pub fn render_html_chrome(data: &[u8]) -> Result<DynamicImage> {
 pub fn render_office(
     data: &[u8],
     extension: &str,
+    conf_w: Option<u32>,
+    term_width: u32,
     pages: Option<Vec<u16>>,
+    cache_dir: Option<&Path>,
 ) -> Result<DynamicImage> {
-    // Write data to temporary file because office libs usually need seekable files
-    let mut temp = tempfile::NamedTempFile::new()?;
-    std::io::Write::write_all(&mut temp, data)?;
-    let path = temp.path();
+    let hash = Sha256::digest(data);
+    let hash_str = hex::encode(hash);
 
-    let mut html_content = String::from(
-        "<html><body style='background:white; color:black; font-family: sans-serif;'>",
-    );
+    // convert to pdf with libreoffice (soffice command)
+    let binding = proj_dirs();
+    let cache_dir = cache_dir.unwrap_or_else(|| binding.cache_dir());
+    std::fs::create_dir_all(cache_dir)?;
 
-    if extension == "xlsx" {
-        // Excel handling
-        let mut workbook: Xlsx<_> = calamine::open_workbook(path).context("Cannot open XLSX")?;
-
-        // Simple heuristic: if specific pages (worksheets) requested, use indices
-        let sheets = workbook.sheet_names().to_owned();
-        let selected_sheets = if let Some(indices) = pages {
-            indices
-                .iter()
-                .filter_map(|&i| sheets.get(i as usize).map(|s| s.clone()))
-                .collect()
-        } else {
-            // Default to first sheet
-            sheets.first().map(|s| vec![s.clone()]).unwrap_or_default()
-        };
-
-        for s_name in selected_sheets {
-            html_content.push_str(&format!(
-                "<h1>{}</h1><table border='1' style='border-collapse: collapse;'>",
-                s_name
-            ));
-            if let Ok(range) = workbook.worksheet_range(&s_name) {
-                for row in range.rows() {
-                    html_content.push_str("<tr>");
-                    for cell in row {
-                        html_content.push_str(&format!("<td style='padding: 4px;'>{}</td>", cell));
-                    }
-                    html_content.push_str("</tr>");
-                }
-            }
-            html_content.push_str("</table><br/>");
-        }
-    } else if extension == "pptx" {
-        // Rudimentary PPTX: Iterate ppt/slides/slideX.xml in the zip
-        let file = std::fs::File::open(path)?;
-        let mut archive = zip::ZipArchive::new(file)?;
-
-        let mut slide_indices = Vec::new();
-        for i in 0..archive.len() {
-            let file = archive.by_index(i)?;
-            let name = file.name();
-            if name.starts_with("ppt/slides/slide") && name.ends_with(".xml") {
-                // extract number
-                let num_str: String = name.chars().filter(|c| c.is_numeric()).collect();
-                if let Ok(num) = num_str.parse::<u16>() {
-                    slide_indices.push(num);
-                }
-            }
-        }
-        slide_indices.sort();
-
-        let targets = if let Some(p) = pages {
-            p
-        } else {
-            slide_indices
-        };
-
-        for i in targets {
-            let entry_name = format!("ppt/slides/slide{}.xml", i); // standard naming usually 1-indexed in filename
-                                                                   // Try to find exact entry
-            let mut zip_file = match archive.by_name(&entry_name) {
-                Ok(f) => f,
-                Err(_) => {
-                    // Try to fallback to 1-based index logic if i came from parsing
-                    if let Ok(f) = archive.by_name(&format!("ppt/slides/slide{}.xml", i + 1)) {
-                        f
-                    } else {
-                        continue;
-                    }
-                }
-            };
-
-            let mut xml_content = String::new();
-            zip_file.read_to_string(&mut xml_content)?;
-
-            // Very naive text extraction from XML
-            let mut reader = XmlReader::from_str(&xml_content);
-            reader.trim_text(true);
-            let mut txt = String::new();
-            let mut buf = Vec::new();
-
-            loop {
-                match reader.read_event_into(&mut buf) {
-                    Ok(Event::Text(e)) => txt.push_str(&e.unescape().unwrap_or_default()),
-                    Ok(Event::Eof) => break,
-                    _ => (),
-                }
-                buf.clear();
-            }
-
-            html_content.push_str(&format!("<div style='border: 1px solid black; padding: 20px; margin: 20px; min-height: 400px;'><h2>Slide {}</h2><p>{}</p></div>", i, txt));
-        }
-    } else if extension == "docx" {
-        // Rudimentary DOCX
-        let file = std::fs::File::open(path)?;
-        let mut archive = zip::ZipArchive::new(file)?;
-
-        if let Ok(mut doc) = archive.by_name("word/document.xml") {
-            let mut xml_content = String::new();
-            doc.read_to_string(&mut xml_content)?;
-
-            let mut reader = XmlReader::from_str(&xml_content);
-            reader.trim_text(true);
-
-            html_content.push_str("<div style='padding: 40px; max-width: 800px;'>");
-            let mut buf = Vec::new();
-            loop {
-                match reader.read_event_into(&mut buf) {
-                    Ok(Event::Text(e)) => {
-                        let t = e.unescape().unwrap_or_default();
-                        html_content.push_str(&format!("{} ", t));
-                    }
-                    Ok(Event::End(ref e)) if e.name().as_ref() == b"p" => {
-                        html_content.push_str("<br/><br/>");
-                    }
-                    Ok(Event::Eof) => break,
-                    _ => (),
-                }
-                buf.clear();
-            }
-            html_content.push_str("</div>");
-        }
+    let cache_path = cache_dir.join(format!("{}.pdf", hash_str));
+    if cache_path.exists() {
+        // read cache data
+        let cache_data = std::fs::read(&cache_path)?;
+        return render_pdf(&cache_data, conf_w, term_width, pages);
     }
 
-    html_content.push_str("</body></html>");
+    // create temp file with name hash.extension
+    let temp_dir = tempfile::tempdir()?;
+    let source_temp = temp_dir.path().join(format!("{}.{}", hash_str, extension));
+    std::fs::write(&source_temp, data)?;
 
-    // Pass generated HTML to chrome renderer
-    render_html_chrome(html_content.as_bytes())
+    eprintln!("Converting office document to PDF...");
+    // mute soffice output
+    Command::new("soffice")
+        .arg("--headless")
+        .arg("--convert-to")
+        .arg("pdf")
+        .arg(source_temp.as_os_str())
+        .arg("--outdir")
+        .arg(cache_dir.as_os_str())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .context("Failed to convert office document to PDF")?;
+
+    let pdf_path = cache_dir.join(format!("{}.pdf", hash_str));
+    let pdf_data = std::fs::read(&pdf_path)?;
+    render_pdf(&pdf_data, conf_w, term_width, pages)
 }

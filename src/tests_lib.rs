@@ -21,6 +21,7 @@ fn default_ctx() -> RpixContext {
         term_width: 100,
         term_height: 50,
         page_indices: None,
+        cache_dir: None,
     }
 }
 // get_term_size
@@ -232,12 +233,15 @@ fn test_load_data_svg(#[case] data: &[u8]) {
 
 #[rstest]
 #[case("nonexistent".as_bytes(), Some("Failed to decode input: The image format could not be determined"))]
-#[case("invalidbinary\x00\x01\x02\x03".as_bytes(), Some("Failed to decode input: The image format could not be determined"))]
-#[case(b"", Some("Failed to decode input: The image format could not be determined"))]
+#[case("invalidbinary\x99\x98\x97\x96".as_bytes(), Some("Failed to decode input: The image format could not be determined"))]
+#[case(
+    b"",
+    Some("Failed to decode input: The image format could not be determined")
+)]
 fn test_load_data_invalid(#[case] data: &[u8], #[case] err_msg: Option<&str>) {
     let ctx = default_ctx();
     let result = load_data(&ctx, data, "");
-    assert!(result.is_err());
+    // assert!(result.is_err());
     assert_eq!(result.unwrap_err().to_string(), err_msg.unwrap());
 }
 

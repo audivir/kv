@@ -3,13 +3,15 @@ use base64::{engine::general_purpose, Engine as _};
 use clap::{Parser, ValueEnum};
 use flate2::write::ZlibEncoder;
 use flate2::Compression;
+use image::codecs::png::PngEncoder;
 use image::imageops::FilterType;
 use image::{DynamicImage, GenericImageView, ImageEncoder};
 use rpix::*;
-use std::io::{self, Read, Write};
+use std::io::{self, Read, Write, Cursor};
 use std::path::PathBuf;
 use tempfile::NamedTempFile;
-use std::process::Command;
+use bat::{PrettyPrinter,Input};
+
 const CHUNK_SIZE: usize = 4096;
 
 #[cfg(test)]
@@ -64,27 +66,19 @@ struct Config {
     #[arg(name = "FILES")]
     files: Vec<PathBuf>,
 
-    /// Specify image width
+    /// Specify image width in pixels
     #[arg(
         short = 'w',
         long,
-        conflicts_with = "height",
-        conflicts_with = "fullwidth",
-        conflicts_with = "fullheight",
-        conflicts_with = "resize",
-        conflicts_with = "noresize"
+        conflicts_with_all = ["height", "fullwidth", "fullheight", "resize", "noresize"],
     )]
     width: Option<u32>,
 
-    /// Specify image height
+    /// Specify image height in pixels
     #[arg(
         short = 'H', // else conflicts with --help
         long,
-        conflicts_with = "width",
-        conflicts_with = "fullwidth",
-        conflicts_with = "fullheight",
-        conflicts_with = "resize",
-        conflicts_with = "noresize"
+        conflicts_with_all = ["width", "fullwidth", "fullheight", "resize", "noresize"],
     )]
     height: Option<u32>,
 
@@ -92,11 +86,7 @@ struct Config {
     #[arg(
         short = 'f',
         long,
-        conflicts_with = "width",
-        conflicts_with = "height",
-        conflicts_with = "fullheight",
-        conflicts_with = "resize",
-        conflicts_with = "noresize"
+        conflicts_with_all = ["width", "height", "fullheight", "resize", "noresize"],
     )]
     fullwidth: bool,
 
@@ -104,11 +94,7 @@ struct Config {
     #[arg(
         short = 'F',
         long,
-        conflicts_with = "width",
-        conflicts_with = "height",
-        conflicts_with = "fullwidth",
-        conflicts_with = "resize",
-        conflicts_with = "noresize"
+        conflicts_with_all = ["width", "height", "fullwidth", "resize", "noresize"],
     )]
     fullheight: bool,
 
@@ -116,35 +102,27 @@ struct Config {
     #[arg(
         short = 'r',
         long,
-        conflicts_with = "width",
-        conflicts_with = "height",
-        conflicts_with = "fullwidth",
-        conflicts_with = "fullheight",
-        conflicts_with = "noresize"
+        conflicts_with_all = ["width", "height", "fullwidth", "fullheight", "noresize"],
     )]
     resize: bool,
 
-    /// Disable automatic resizing
+    /// Disable automatic resizing (show original size)
     #[arg(
         short = 'n',
         long,
-        conflicts_with = "width",
-        conflicts_with = "height",
-        conflicts_with = "fullwidth",
-        conflicts_with = "fullheight",
-        conflicts_with = "resize"
+        conflicts_with_all = ["width", "height", "fullwidth", "fullheight", "resize"],
     )]
     noresize: bool,
 
-    /// Add background if image is transparent
+    /// Add background (useful for transparent images)
     #[arg(short = 'b', long)]
     background: bool,
 
-    /// Background color as hex string
-    #[arg(short = 'C', long, default_value = "FFFFFF", requires = "background")]
+    /// Set background color as hex string
+    #[arg(short = 'C', long, default_value = "#FFFFFF", requires = "background")]
     color: String,
 
-    /// Transmission mode
+    /// Set transmission mode
     #[arg(short = 'm', long, value_enum, default_value_t = Mode::Png)]
     mode: Mode,
 
@@ -156,15 +134,19 @@ struct Config {
     #[arg(short = 'x', long, requires = "output")]
     overwrite: bool,
 
-    /// Input type
-    #[arg(short = 'i', long, value_enum, default_value_t = InputTypeOption::Auto, conflicts_with = "pages")]
+    /// Set input type
+    #[arg(short = 'i', long, value_enum, default_value_t = InputTypeOption::Auto)]
     input: InputTypeOption,
 
-    /// Select which PDF pages to render, forces input type to pdf (e.g. "1-3,34")
-    #[arg(short = 'P', long, conflicts_with = "input")]
+    /// Select pages to render (e.g. "1-3,34")
+    #[arg(short = 'P', long)]
     pages: Option<String>,
 
-    /// Print file name
+    /// Set language for syntax highlighting (e.g. "toml")
+    #[arg(short = 'l', long)]
+    language: Option<String>,
+
+    /// Print filename before image
     #[arg(short = 'p', long)]
     printname: bool,
 
@@ -172,7 +154,7 @@ struct Config {
     #[arg(short = 't', long)]
     tty: bool,
 
-    /// Clear terminal (does not print image)
+    /// Clear terminal (remove all images)
     #[arg(short = 'c', long)]
     clear: bool,
 }
@@ -211,7 +193,7 @@ fn render_image(
     if conf.output.is_some() || conf.mode == Mode::Png {
         // encode as png
         let mut buffer = Vec::new();
-        let encoder = image::codecs::png::PngEncoder::new(&mut buffer);
+        let encoder = PngEncoder::new(&mut buffer);
         let (width, height) = final_img.dimensions();
         let color_type = final_img.color();
 
@@ -272,38 +254,27 @@ fn render_image(
     Ok(())
 }
 
-fn fallback_viewer_data(data : &[u8]) -> Result<()> {
-    // pipe the data to bat
-    let mut viewer = if let Ok(bat) = Command::new("bat")
-        .arg("--paging=never")
-        .arg("--style=plain")
-        .arg("-")
-        .spawn() {
-        bat
-    } else {
-        // fallback cat
-        let cat = Command::new("cat").arg("-").spawn()?;
-        cat
-    };
-    viewer.stdin.as_mut().unwrap().write_all(data)?;
-    viewer.wait()?;
-    Ok(())
+enum PrinterInput {
+    File(PathBuf),
+    Data(Vec<u8>),
 }
 
-fn fallback_viewer(path: &PathBuf) -> Result<()> {
-    // try 'bat' with --paging=never
-    if Command::new("bat")
-        .arg("--paging=never")
-        .arg("--style=plain")
-        .arg(path)
-        .status()
-        .is_ok()
-    {
-        return Ok(());
+fn pretty_print(input: PrinterInput, language: Option<&str>, writer: &mut impl Write) -> Result<()> {
+    let mut printer = PrettyPrinter::new();
+    match input {
+        PrinterInput::File(path) => printer.input_file(path),
+        PrinterInput::Data(data) => {
+            let cursor = Cursor::new(data);
+            let printer = printer.input(Input::from_reader(cursor));
+            printer
+        }
+    };
+    if let Some(language) = language {
+        printer.language(language);
     }
-
-    // fallback to 'cat'
-    Command::new("cat").arg(path).status()?;
+    let mut output = String::new();
+    let _ = printer.print_with_writer(Some(&mut output));
+    writer.write_all(output.as_bytes())?;
     Ok(())
 }
 
@@ -314,6 +285,7 @@ fn run(
     conf: Config,
     term_size: (u32, u32),
     is_input_available: bool,
+    cache_dir: Option<PathBuf>,
 ) -> Result<i32> {
     if conf.clear {
         write!(writer, "\x1b_Ga=d\x1b\\")?;
@@ -357,27 +329,28 @@ fn run(
         term_width: term_size.0,
         term_height: term_size.1,
         page_indices,
+        cache_dir,
     };
 
     if use_stdin {
+        if conf.printname {
+            writeln!(err_writer, "stdin")?;
+        }
+
         let mut data = Vec::new();
         reader.read_to_end(&mut data)?;
-        
+
         match load_data(&ctx, &data, "") {
-            Ok(img) => {
-                if conf.printname {
-                    writeln!(err_writer, "stdin")?;
+            Ok(LoadResult::Image(img)) => {
+                if let Err(e) = render_image(&mut writer, img, &conf, term_size) {
+                    writeln!(err_writer, "Error rendering stdin: {}", e)?;
+                    return Ok(1);
                 }
-                render_image(writer, img, &conf, term_size)?;
+            }
+            Ok(LoadResult::Data(data)) => {
+                pretty_print(PrinterInput::Data(data), conf.language.as_deref(), &mut writer)?;
             }
             Err(e) => {
-                // If data is not an image, try to print as text
-                if !conf.output.is_some() && e.to_string().contains("Failed to decode input") {
-                     if let Ok(text) = String::from_utf8(data) {
-                        fallback_viewer_data(&text.as_bytes())?;
-                        return Ok(0);
-                     }
-                }
                 writeln!(err_writer, "Error decoding stdin: {}", e)?;
                 return Ok(1);
             }
@@ -389,23 +362,18 @@ fn run(
                 writeln!(err_writer, "{}", path.display())?;
             }
             match load_file(&ctx, path) {
-                Ok(img) => {
+                Ok(LoadResult::Image(img)) => {
                     if let Err(e) = render_image(&mut writer, img, &conf, term_size) {
                         writeln!(err_writer, "Error rendering {}: {}", path.display(), e)?;
                         exit_code = 1;
                     }
                 }
+                Ok(LoadResult::Data(_)) => {
+                    pretty_print(PrinterInput::File(path.clone()), conf.language.as_deref(), &mut writer)?;
+                }
                 Err(e) => {
-                    // FALLBACK: If not an image, try fallback viewer (bat/cat)
-                    if !conf.output.is_some() && e.to_string().contains("Failed to decode") {
-                        if let Err(fe) = fallback_viewer(path) {
-                            writeln!(err_writer, "Error loading {}: {} (Fallback failed: {})", path.display(), e, fe)?;
-                            exit_code = 1;
-                        }
-                    } else {
-                        writeln!(err_writer, "Error loading {}: {}", path.display(), e)?;
-                        exit_code = 1;
-                    }
+                    writeln!(err_writer, "Error loading {}: {}", path.display(), e)?;
+                    exit_code = 1;
                 }
             }
         }
@@ -477,6 +445,7 @@ fn main() -> Result<()> {
         conf,
         term_size,
         is_input_available,
+        None,
     )?;
 
     // Commit temp file only on success

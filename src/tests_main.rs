@@ -23,6 +23,7 @@ fn default_conf() -> Config {
         overwrite: false,
         input: InputTypeOption::Auto,
         pages: None,
+        language: None,
         printname: true, // default to true for tests
         tty: false,
         clear: false,
@@ -38,6 +39,7 @@ fn run_test(
     expected_code: i32,
     contains: bool,
     term_size: (u32, u32),
+    cache_dir: Option<PathBuf>,
 ) {
     let mut output = Vec::new();
     let mut error_output = Vec::new();
@@ -48,6 +50,7 @@ fn run_test(
         conf,
         term_size,
         is_input_available,
+        cache_dir,
     )
     .unwrap();
     let output_str = String::from_utf8(output).unwrap();
@@ -111,6 +114,7 @@ fn test_resize(
         0,
         true,
         (100, 50),
+        None,
     );
 }
 
@@ -139,6 +143,7 @@ fn test_output() {
         conf,
         (800, 400),
         false,
+        None,
     )
     .unwrap();
     assert_eq!(code, 0);
@@ -172,6 +177,7 @@ fn test_pages(
             0,
             true,
             (800, 400),
+            None,
         );
     } else {
         run_test(
@@ -183,6 +189,7 @@ fn test_pages(
             1,
             false,
             (800, 400),
+            None,
         );
     }
 }
@@ -210,6 +217,7 @@ fn test_force_tty(
             0,
             true,
             (800, 400),
+            None,
         );
     } else {
         run_test(
@@ -221,6 +229,7 @@ fn test_force_tty(
             1,
             false,
             (800, 400),
+            None,
         );
     }
 }
@@ -241,6 +250,7 @@ fn test_printname(#[values(false, true)] printname: bool) {
         0,
         true,
         (800, 400),
+        None,
     );
 }
 
@@ -265,6 +275,7 @@ fn test_clear(
         0,
         false,
         (800, 400),
+        None,
     );
 }
 
@@ -287,6 +298,7 @@ fn test_stdin(
         0,
         true,
         (800, 400),
+        None,
     );
 }
 
@@ -302,6 +314,7 @@ fn test_no_input() {
         1,
         false,
         (800, 400),
+        None,
     );
 }
 
@@ -325,5 +338,6 @@ fn test_files(
         expected_code,
         true,
         (800, 400),
+        None,
     );
 }
