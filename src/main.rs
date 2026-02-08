@@ -9,7 +9,7 @@ use rpix::*;
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
 use tempfile::NamedTempFile;
-
+use std::process::Command;
 const CHUNK_SIZE: usize = 4096;
 
 #[cfg(test)]
@@ -26,9 +26,15 @@ enum Mode {
 enum InputTypeOption {
     Auto,
     Image,
+    Text,
+    #[cfg(feature = "svg")]
     Svg,
+    #[cfg(feature = "pdf")]
     Pdf,
+    #[cfg(feature = "html")]
     Html,
+    #[cfg(feature = "office")]
+    Office,
 }
 
 impl From<InputTypeOption> for InputType {
@@ -36,9 +42,15 @@ impl From<InputTypeOption> for InputType {
         match arg {
             InputTypeOption::Auto => InputType::Auto,
             InputTypeOption::Image => InputType::Image,
+            InputTypeOption::Text => InputType::Text,
+            #[cfg(feature = "svg")]
             InputTypeOption::Svg => InputType::Svg,
+            #[cfg(feature = "pdf")]
             InputTypeOption::Pdf => InputType::Pdf,
+            #[cfg(feature = "html")]
             InputTypeOption::Html => InputType::Html,
+            #[cfg(feature = "office")]
+            InputTypeOption::Office => InputType::Office,
         }
     }
 }
@@ -260,11 +272,46 @@ fn render_image(
     Ok(())
 }
 
+fn fallback_viewer_data(data : &[u8]) -> Result<()> {
+    // pipe the data to bat
+    let mut viewer = if let Ok(bat) = Command::new("bat")
+        .arg("--paging=never")
+        .arg("--style=plain")
+        .arg("-")
+        .spawn() {
+        bat
+    } else {
+        // fallback cat
+        let cat = Command::new("cat").arg("-").spawn()?;
+        cat
+    };
+    viewer.stdin.as_mut().unwrap().write_all(data)?;
+    viewer.wait()?;
+    Ok(())
+}
+
+fn fallback_viewer(path: &PathBuf) -> Result<()> {
+    // try 'bat' with --paging=never
+    if Command::new("bat")
+        .arg("--paging=never")
+        .arg("--style=plain")
+        .arg(path)
+        .status()
+        .is_ok()
+    {
+        return Ok(());
+    }
+
+    // fallback to 'cat'
+    Command::new("cat").arg(path).status()?;
+    Ok(())
+}
+
 fn run(
     mut writer: impl Write,
     mut err_writer: impl Write,
     mut reader: impl Read,
-    mut conf: Config,
+    conf: Config,
     term_size: (u32, u32),
     is_input_available: bool,
 ) -> Result<i32> {
@@ -298,7 +345,6 @@ fn run(
             writeln!(err_writer, "Error: Invalid page range")?;
             return Ok(1);
         };
-        conf.input = InputTypeOption::Pdf;
         page_indices
     } else {
         None
@@ -316,27 +362,50 @@ fn run(
     if use_stdin {
         let mut data = Vec::new();
         reader.read_to_end(&mut data)?;
-        let img = load_data(&ctx, &data, "")?;
-        if conf.printname {
-            writeln!(err_writer, "stdin")?;
+        
+        match load_data(&ctx, &data, "") {
+            Ok(img) => {
+                if conf.printname {
+                    writeln!(err_writer, "stdin")?;
+                }
+                render_image(writer, img, &conf, term_size)?;
+            }
+            Err(e) => {
+                // If data is not an image, try to print as text
+                if !conf.output.is_some() && e.to_string().contains("Failed to decode input") {
+                     if let Ok(text) = String::from_utf8(data) {
+                        fallback_viewer_data(&text.as_bytes())?;
+                        return Ok(0);
+                     }
+                }
+                writeln!(err_writer, "Error decoding stdin: {}", e)?;
+                return Ok(1);
+            }
         }
-        render_image(writer, img, &conf, term_size)?;
     } else if !conf.files.is_empty() {
         let mut exit_code = 0;
         for path in &conf.files {
+            if conf.printname {
+                writeln!(err_writer, "{}", path.display())?;
+            }
             match load_file(&ctx, path) {
                 Ok(img) => {
-                    if conf.printname {
-                        writeln!(err_writer, "{}", path.display())?;
-                    }
                     if let Err(e) = render_image(&mut writer, img, &conf, term_size) {
                         writeln!(err_writer, "Error rendering {}: {}", path.display(), e)?;
                         exit_code = 1;
                     }
                 }
                 Err(e) => {
-                    writeln!(err_writer, "Error loading {}: {}", path.display(), e)?;
-                    exit_code = 1;
+                    // FALLBACK: If not an image, try fallback viewer (bat/cat)
+                    if !conf.output.is_some() && e.to_string().contains("Failed to decode") {
+                        if let Err(fe) = fallback_viewer(path) {
+                            writeln!(err_writer, "Error loading {}: {} (Fallback failed: {})", path.display(), e, fe)?;
+                            exit_code = 1;
+                        }
+                    } else {
+                        writeln!(err_writer, "Error loading {}: {}", path.display(), e)?;
+                        exit_code = 1;
+                    }
                 }
             }
         }

@@ -150,7 +150,7 @@ fn test_output() {
 #[rstest]
 #[case(vec![],"0", false, "Error: Invalid page range\n")]
 #[case(vec![],"-1", false, "Error: Invalid page range\n")]
-#[case(vec!["fixtures/test.pdf".into()],"2", false, "Error loading fixtures/test.pdf: Page index out of range (must be <= 1)\n")]
+#[case(vec!["fixtures/test.pdf".into()],"2", false, "fixtures/test.pdf\nError loading fixtures/test.pdf: Page index out of range (must be <= 1)\n")]
 #[case(vec!["fixtures/test.pdf".into(),"fixtures/test.png".into()],"1", false, "Error: Cannot specify multiple files with --pages\n")]
 #[case(vec!["fixtures/test.pdf".into()],"1", true, "fixtures/test.pdf\n")]
 fn test_pages(
@@ -308,7 +308,7 @@ fn test_no_input() {
 #[rstest]
 #[case(vec!["fixtures/test.png".into()], "fixtures/test.png\n", 0)]
 #[case(vec!["fixtures/test.jpg".into(), "fixtures/test.png".into()], "fixtures/test.jpg\nfixtures/test.png\n", 0)]
-#[case(vec!["fixtures/test.png".into(), "nonexistent".into()], "fixtures/test.png\nError loading nonexistent: Failed to open file\n", 1)]
+#[case(vec!["fixtures/test.png".into(), "nonexistent".into()], "fixtures/test.png\nnonexistent\nError loading nonexistent: Failed to open file\n", 1)]
 fn test_files(
     #[case] files: Vec<PathBuf>,
     #[case] expected_error: &str,

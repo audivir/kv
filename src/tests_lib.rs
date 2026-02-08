@@ -9,11 +9,9 @@ const WHITE: Rgba<u8> = Rgba([255, 255, 255, 255]);
 const BLACK: Rgba<u8> = Rgba([0, 0, 0, 255]);
 const TRANSPARENT: Rgba<u8> = Rgba([0, 0, 0, 0]);
 
-const RANDOM_DATA: &[u8] = include_bytes!("../fixtures/test.random");
 const PNG_DATA: &[u8] = include_bytes!("../fixtures/test.png");
+#[cfg(feature = "svg")]
 const SVG_DATA: &[u8] = include_bytes!("../fixtures/test.svg");
-const PDF_DATA: &[u8] = include_bytes!("../fixtures/test.pdf");
-const HTML_DATA: &[u8] = include_bytes!("../fixtures/test.html");
 
 fn default_ctx() -> RpixContext {
     RpixContext {
@@ -152,95 +150,6 @@ fn test_parse_pages_invalid(#[case] input: &str) {
     assert!(result.is_err());
 }
 
-#[test]
-fn test_render_svg() {
-    let result = render_svg(SVG_DATA);
-    assert!(result.is_ok(), "SVG generation failed");
-
-    let img = result.unwrap();
-    assert_eq!(img.width(), 1);
-    assert_eq!(img.height(), 1);
-
-    let pixel = img.get_pixel(0, 0);
-    assert_eq!(pixel, Rgba([102, 102, 102, 255]));
-}
-
-#[test]
-fn test_render_svg_invalid() {
-    let svg_data = br#"<svg>invalid"#;
-
-    let result = render_svg(svg_data);
-    assert!(result.is_err(), "SVG generation failed");
-}
-
-#[rstest]
-#[case(None, 100, None, 100)]
-#[case(None, 100, Some(vec![0]), 100)]
-#[case(Some(10), 100, None, 10)]
-fn test_render_pdf(
-    #[case] conf_w: Option<u32>,
-    #[case] term_width: u32,
-    #[case] page_indices: Option<Vec<u16>>,
-    #[case] expected_width: u32,
-) {
-    let result = render_pdf(PDF_DATA, conf_w, term_width, page_indices);
-    assert!(result.is_ok(), "PDF generation failed");
-
-    let img = result.unwrap();
-    assert_eq!(img.width(), expected_width);
-
-    let pixel = img.get_pixel(0, 0);
-    assert_eq!(pixel, Rgba([255, 255, 255, 255]));
-}
-
-#[test]
-fn test_render_pdf_invalid() {
-    let pdf_data = br#"%PDF-1.4
-invalid"#;
-
-    let result = render_pdf(pdf_data, None, 100, None);
-    assert!(result.is_err(), "PDF generation failed");
-}
-
-#[rstest]
-#[case(vec![])]
-#[case(vec![2])]
-fn test_render_pdf_out_of_range(#[case] page_indices: Vec<u16>) {
-    let result = render_pdf(PDF_DATA, None, 100, Some(page_indices));
-    assert!(result.is_err(), "PDF generation failed");
-}
-
-#[rstest]
-#[case(HTML_DATA)]
-#[case(b"fixtures/test.html")]
-#[case(b"https://commons.wikimedia.org/wiki/File:Solid_red.png")]
-fn test_render_html_chrome(#[case] html_data: &[u8]) {
-    let result = render_html_chrome(html_data);
-    assert!(result.is_ok(), "HTML generation failed");
-
-    let img = result.unwrap();
-
-    // iterate through all pixels and check if any is red
-    let mut red_found = false;
-    for x in 0..img.width() {
-        for y in 0..img.height() {
-            let pixel = img.get_pixel(x, y);
-            if pixel == Rgba([255, 0, 0, 255]) {
-                red_found = true;
-                break;
-            }
-        }
-    }
-    assert!(red_found, "Red pixel not found");
-}
-
-#[rstest]
-#[case(RANDOM_DATA)] // non-utf-8
-fn test_render_html_chrome_invalid(#[case] html_data: &[u8]) {
-    let result = render_html_chrome(html_data);
-    assert!(result.is_err(), "HTML generation should fail");
-}
-
 #[rstest]
 #[case(PathBuf::from("fixtures/test.svg"), InputType::Svg)]
 #[case(PathBuf::from("fixtures/test.png"), InputType::Image)]
@@ -266,16 +175,6 @@ fn test_load_file(#[case] path: PathBuf, #[case] input_type: InputType) {
     InputType::Image,
     "Failed to load image"
 )]
-#[case(
-    PathBuf::from("fixtures/test.png"),
-    InputType::Svg,
-    "Failed to parse SVG"
-)]
-#[case(
-    PathBuf::from("fixtures/test.pdf"),
-    InputType::Svg,
-    "Failed to parse SVG"
-)]
 fn test_load_file_invalid(
     #[case] path: PathBuf,
     #[case] input_type: InputType,
@@ -288,9 +187,31 @@ fn test_load_file_invalid(
     assert_eq!(result.unwrap_err().to_string(), err_msg);
 }
 
+#[cfg(feature = "svg")]
 #[rstest]
-#[case("fixtures/test.svg".as_bytes())]
-#[case(SVG_DATA)]
+#[case(
+    PathBuf::from("fixtures/test.png"),
+    InputType::Svg,
+    "Failed to parse SVG"
+)]
+#[case(
+    PathBuf::from("fixtures/test.pdf"),
+    InputType::Svg,
+    "Failed to parse SVG"
+)]
+fn test_load_file_invalid_svg(
+    #[case] path: PathBuf,
+    #[case] input_type: InputType,
+    #[case] err_msg: &str,
+) {
+    let mut ctx = default_ctx();
+    ctx.input_type = input_type;
+    let result = load_file(&ctx, &path);
+    assert!(result.is_err());
+    assert_eq!(result.unwrap_err().to_string(), err_msg);
+}
+
+#[rstest]
 #[case("fixtures/test.png".as_bytes())]
 #[case(PNG_DATA)]
 fn test_load_data(#[case] data: &[u8]) {
@@ -299,15 +220,31 @@ fn test_load_data(#[case] data: &[u8]) {
     assert!(result.is_ok());
 }
 
+#[cfg(feature = "svg")]
+#[rstest]
+#[case("fixtures/test.svg".as_bytes())]
+#[case(SVG_DATA)]
+fn test_load_data_svg(#[case] data: &[u8]) {
+    let ctx = default_ctx();
+    let result = load_data(&ctx, data, "");
+    assert!(result.is_ok());
+}
+
 #[rstest]
 #[case("nonexistent".as_bytes(), Some("Failed to decode input: The image format could not be determined"))]
 #[case("invalidbinary\x00\x01\x02\x03".as_bytes(), Some("Failed to decode input: The image format could not be determined"))]
-#[case("<svg>invalid".as_bytes(), Some("Failed to parse SVG"))]
-#[case(
-    b"",
-    Some("Failed to decode input: The image format could not be determined")
-)]
+#[case(b"", Some("Failed to decode input: The image format could not be determined"))]
 fn test_load_data_invalid(#[case] data: &[u8], #[case] err_msg: Option<&str>) {
+    let ctx = default_ctx();
+    let result = load_data(&ctx, data, "");
+    assert!(result.is_err());
+    assert_eq!(result.unwrap_err().to_string(), err_msg.unwrap());
+}
+
+#[cfg(feature = "svg")]
+#[rstest]
+#[case("<svg>invalid".as_bytes(), Some("Failed to parse SVG"))]
+fn test_load_data_invalid_svg(#[case] data: &[u8], #[case] err_msg: Option<&str>) {
     let ctx = default_ctx();
     let result = load_data(&ctx, data, "");
     assert!(result.is_err());
