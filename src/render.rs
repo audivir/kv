@@ -38,9 +38,9 @@ struct Subdirs {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn xdg_pref_project_dirs() -> Subdirs {
+fn rpix_project_dirs() -> Subdirs {
     // use original directories implementation
-    let project_dirs = ProjectDirs::from("org", "example", "rpix").expect("Could not determine XDG directories");
+    let project_dirs = ProjectDirs::from("de", "audivir", "rpix").expect("Could not determine XDG directories");
     Subdirs {
         cache_dir: project_dirs.cache_dir().to_path_buf(),
         data_dir: project_dirs.data_dir().to_path_buf(),
@@ -48,7 +48,7 @@ fn xdg_pref_project_dirs() -> Subdirs {
 }
 
 #[cfg(target_os = "macos")]
-fn xdg_pref_project_dirs() -> Subdirs {
+fn rpix_project_dirs() -> Subdirs {
     // use macos home dir, but linux style paths
     let home_dir = env::home_dir().expect("Could not determine home directory");
 
@@ -63,8 +63,8 @@ fn xdg_pref_project_dirs() -> Subdirs {
         .unwrap_or_else(|| home_dir.join(".local/share"));
 
     Subdirs {
-        cache_dir,
-        data_dir,
+        cache_dir: cache_dir.join("rpix"),
+        data_dir: data_dir.join("rpix"),
     }
 }
 
@@ -199,7 +199,7 @@ pub fn render_html_chrome(data: &[u8]) -> Result<DynamicImage> {
         }
     };
 
-    let user_data_dir = xdg_pref_project_dirs().data_dir.join("chromium");
+    let user_data_dir = rpix_project_dirs().data_dir.join("chromium");
     std::fs::create_dir_all(&user_data_dir)?;
     let browser = Browser::new(LaunchOptions {
         headless: true,
@@ -234,7 +234,7 @@ pub fn render_office(
     let hash_str = hex::encode(hash);
 
     // convert to pdf with libreoffice (soffice command)
-    let project_dirs = xdg_pref_project_dirs();
+    let project_dirs = rpix_project_dirs();
     let cache_dir = cache_dir.unwrap_or_else(|| &project_dirs.cache_dir);
     std::fs::create_dir_all(cache_dir)?;
 
