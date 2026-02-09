@@ -29,7 +29,7 @@ fn default_conf() -> Config {
         no_cache: false,
         printname: true, // default to true for tests
         tty: false,
-        clear: false,
+        remove: false,
     }
 }
 
@@ -257,15 +257,15 @@ fn test_printname(#[values(false, true)] printname: bool) {
     );
 }
 
-// --clear
+// --remove
 #[rstest]
-fn test_clear(
+fn test_remove(
     #[values(false, true)] is_input_available: bool,
     #[values(false, true)] tty: bool,
     #[values(vec![], vec!["fixtures/test.png".into()])] files: Vec<PathBuf>,
 ) {
     let mut conf = default_conf();
-    conf.clear = true;
+    conf.remove = true;
     conf.tty = tty;
     conf.files = files;
 
