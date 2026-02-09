@@ -58,25 +58,26 @@ rpix document.docx
 
 ### Options
 
-| Flag                 | Description                                                       |
-| -------------------- | ----------------------------------------------------------------- |
-| `-w`, `--width`      | Specify image width in pixels.                                    |
-| `-H`, `--height`     | Specify image height in pixels.                                   |
-| `-f`, `--fullwidth`  | Resize image to fill terminal width.                          |
-| `-F`, `--fullheight` | Resize image to fill terminal height.                         |
-| `-r`, `--resize`     | Resize image to fill terminal.                                |
-| `-n`, `--noresize`   | Disable automatic resizing (show original size).                  |
-| `-b`, `--background` | Add a background (useful for transparent images).                   |
-| `-C`, `--color`      | Set background color as hex string. Default: #FFFFFF.             |
-| `-m`, `--mode`       | Set transmission mode (png, zlib, raw). Default: png.             |
-| `-o`, `--output`     | Output to file as png, instead of kitty.                          |
-| `-x`, `--overwrite`  | Overwrite existing output file.                                   |
-| `-i`, `--input`      | Set input type (auto, image, svg, pdf, html). Default: auto.      |
-| `-P`, `--pages`      | Select pages to render (e.g. "1-3,34"). |
-| `-l`, `--language`   | Set language for syntax highlighting (e.g. "toml").               |
-| `-p`, `--printname`  | Print the filename before image.                              |
-| `-t`, `--tty`        | Force tty (ignore stdin check).                                   |
-| `-c`, `--clear`      | Clear the terminal (remove all images).                           |
+| Flag                 | Description                                                          |
+| -------------------- | -------------------------------------------------------------------- |
+| `-w`, `--width`      | Specify image width in pixels.                                       |
+| `-H`, `--height`     | Specify image height in pixels.                                      |
+| `-f`, `--fullwidth`  | Resize image to fill terminal width.                                 |
+| `-F`, `--fullheight` | Resize image to fill terminal height.                                |
+| `-r`, `--resize`     | Resize image to fill terminal.                                       |
+| `-n`, `--noresize`   | Disable automatic resizing (show original size).                     |
+| `-b`, `--background` | Add a background (useful for transparent images).                    |
+| `-C`, `--color`      | Set background color as hex string. Default: #FFFFFF.              |
+| `-m`, `--mode`       | Set transmission mode (png, zlib, raw). Default: png.                |
+| `-o`, `--output`     | Output to file as png, instead of kitty.                             |
+| `-x`, `--overwrite`  | Overwrite existing output file.                                      |
+| `-i`, `--input`      | Set input type (auto, image, svg, pdf, html). Default: auto.         |
+| `-P`, `--pages`      | Select pages to render (e.g. "1-3,34" or empty for all). Default: 1. |
+| `-A`, `--all`        | Select all pages.                                                    |
+| `-l`, `--language`   | Set language for syntax highlighting (e.g. "toml").                  |
+| `-p`, `--printname`  | Print the filename before image.                                     |
+| `-t`, `--tty`        | Force tty (ignore stdin check).                                      |
+| `-c`, `--clear`      | Clear the terminal (remove all images).                              |
 
 ## License
 

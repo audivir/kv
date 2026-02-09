@@ -138,9 +138,13 @@ struct Config {
     #[arg(short = 'i', long, value_enum, default_value_t = InputTypeOption::Auto)]
     input: InputTypeOption,
 
-    /// Select pages to render (e.g. "1-3,34")
-    #[arg(short = 'P', long)]
-    pages: Option<String>,
+    /// Select pages to render (e.g. "1-3,34" or empty for all)
+    #[arg(short = 'P', long, default_value = "1", conflicts_with = "all")]
+    pages: String,
+
+    /// Select all pages
+    #[arg(short = 'A', long, conflicts_with = "pages")]
+    all: bool,
 
     /// Set language for syntax highlighting (e.g. "toml")
     #[arg(short = 'l', long)]
@@ -303,23 +307,28 @@ fn run(
         return Ok(1);
     }
 
-    let page_indices = if let Some(pages) = conf.pages.clone() {
+    let page_indices = if conf.all {
         if !use_stdin && conf.files.len() > 1 {
             writeln!(
                 err_writer,
-                "Error: Cannot specify multiple files with --pages"
+                "Error: Cannot specify multiple files with --all"
             )?;
             return Ok(1);
         }
-        let page_indices = if let Ok(pages) = parse_pages(&pages) {
-            pages
-        } else {
-            writeln!(err_writer, "Error: Invalid page range")?;
-            return Ok(1);
-        };
-        page_indices
-    } else {
         None
+    } else if let Ok(pages) = parse_pages(&conf.pages) {
+        // if pages != [0], disallow multiple files
+        if !use_stdin && conf.files.len() > 1 && pages != Some([0].to_vec()) {
+            writeln!(
+                err_writer,
+                "Error: Cannot specify multiple files with non-default --pages option"
+            )?;
+            return Ok(1);
+        }
+        pages
+    } else {
+        writeln!(err_writer, "Error: Invalid page range")?;
+        return Ok(1);
     };
 
     let ctx = RpixContext {
@@ -396,8 +405,13 @@ fn prepare_writer(
     match output {
         Some(path_str) => {
             let path = PathBuf::from(path_str);
-            // canonicalize path
-            let absolute_path = path.canonicalize()?;
+
+            let absolute_path = if !path.is_absolute() {
+                std::env::current_dir()?.join(&path)
+            } else {
+                path.clone()
+            };
+
             let parent = absolute_path.parent().context("Invalid output path")?;
 
             if !parent.exists() {
