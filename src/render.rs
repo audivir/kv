@@ -2,11 +2,16 @@ use anyhow::{Context, Result};
 use image::{DynamicImage, GenericImage, RgbaImage};
 use std::path::Path;
 use std::process::{Command,Stdio};
+
+#[cfg(not(target_os = "macos"))]
+use directories::ProjectDirs;
+
+#[cfg(target_os = "macos")]
+use std::env;
+
 #[cfg(feature = "pdf")]
 use pdfium_render::prelude::{PdfRenderConfig, Pdfium};
 
-#[cfg(any(feature = "html", feature = "office"))]
-use directories::ProjectDirs;
 
 #[cfg(feature = "html")]
 use crate::{InputType, RpixContext};
@@ -45,7 +50,7 @@ fn xdg_pref_project_dirs() -> Subdirs {
 #[cfg(target_os = "macos")]
 fn xdg_pref_project_dirs() -> Subdirs {
     // use macos home dir, but linux style paths
-    let home_dir = directories::home_dir().expect("Could not determine home directory");
+    let home_dir = env::home_dir().expect("Could not determine home directory");
 
     let cache_dir = env::var_os("XDG_CACHE_HOME")
         .map(PathBuf::from)
