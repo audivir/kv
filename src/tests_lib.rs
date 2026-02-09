@@ -13,14 +13,15 @@ const PNG_DATA: &[u8] = include_bytes!("../fixtures/test.png");
 #[cfg(feature = "svg")]
 const SVG_DATA: &[u8] = include_bytes!("../fixtures/test.svg");
 
-fn default_ctx() -> RpixContext {
-    RpixContext {
+fn default_ctx() -> KvContext {
+    KvContext {
         input_type: InputType::Auto,
         conf_w: None,
         conf_h: None,
         term_width: 100,
         term_height: 50,
         page_indices: None,
+        use_cache: false,
         cache_dir: None,
     }
 }

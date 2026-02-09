@@ -17,13 +17,16 @@ fn default_conf() -> Config {
         resize: false,
         noresize: false,
         background: false,
-        color: "FFFFFF".to_string(),
+        color: "#FFFFFF".to_string(),
         mode: Mode::Png,
         output: None,
         overwrite: false,
         input: InputTypeOption::Auto,
-        pages: None,
+        pages: "1".to_string(),
+        all: false,
         language: None,
+        no_newline: false,
+        no_cache: false,
         printname: true, // default to true for tests
         tty: false,
         clear: false,
@@ -166,7 +169,7 @@ fn test_pages(
 ) {
     let mut conf = default_conf();
     conf.files = files;
-    conf.pages = Some(pages.to_string());
+    conf.pages = pages.to_string();
     if success {
         run_test(
             conf,

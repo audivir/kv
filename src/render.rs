@@ -14,7 +14,7 @@ use pdfium_render::prelude::{PdfRenderConfig, Pdfium};
 
 
 #[cfg(feature = "html")]
-use crate::{InputType, RpixContext};
+use crate::{InputType, KvContext};
 #[cfg(feature = "html")]
 use base64::{engine::general_purpose, Engine as _};
 #[cfg(feature = "html")]
@@ -38,9 +38,9 @@ struct Subdirs {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn rpix_project_dirs() -> Subdirs {
+fn kv_project_dirs() -> Subdirs {
     // use original directories implementation
-    let project_dirs = ProjectDirs::from("de", "audivir", "rpix").expect("Could not determine XDG directories");
+    let project_dirs = ProjectDirs::from("de", "audivir", "kv").expect("Could not determine XDG directories");
     Subdirs {
         cache_dir: project_dirs.cache_dir().to_path_buf(),
         data_dir: project_dirs.data_dir().to_path_buf(),
@@ -48,7 +48,7 @@ fn rpix_project_dirs() -> Subdirs {
 }
 
 #[cfg(target_os = "macos")]
-fn rpix_project_dirs() -> Subdirs {
+fn kv_project_dirs() -> Subdirs {
     // use macos home dir, but linux style paths
     let home_dir = env::home_dir().expect("Could not determine home directory");
 
@@ -63,8 +63,8 @@ fn rpix_project_dirs() -> Subdirs {
         .unwrap_or_else(|| home_dir.join(".local/share"));
 
     Subdirs {
-        cache_dir: cache_dir.join("rpix"),
-        data_dir: data_dir.join("rpix"),
+        cache_dir: cache_dir.join("kv"),
+        data_dir: data_dir.join("kv"),
     }
 }
 
@@ -177,7 +177,7 @@ fn is_url_str(s: &str) -> bool {
 }
 
 #[cfg(feature = "html")]
-pub fn is_html(ctx: &RpixContext, extension: &str, s: &[u8]) -> bool {
+pub fn is_html(ctx: &KvContext, extension: &str, s: &[u8]) -> bool {
     ctx.input_type == InputType::Html || extension == "html" || extension == "htm" || is_url(s)
 }
 
@@ -199,7 +199,7 @@ pub fn render_html_chrome(data: &[u8]) -> Result<DynamicImage> {
         }
     };
 
-    let user_data_dir = rpix_project_dirs().data_dir.join("chromium");
+    let user_data_dir = kv_project_dirs().data_dir.join("chromium");
     std::fs::create_dir_all(&user_data_dir)?;
     let browser = Browser::new(LaunchOptions {
         headless: true,
@@ -228,25 +228,31 @@ pub fn render_office(
     conf_w: Option<u32>,
     term_width: u32,
     pages: Option<Vec<u16>>,
+    use_cache: bool,
     cache_dir: Option<&Path>,
 ) -> Result<DynamicImage> {
     let hash = Sha256::digest(data);
     let hash_str = hex::encode(hash);
 
     // convert to pdf with libreoffice (soffice command)
-    let project_dirs = rpix_project_dirs();
-    let cache_dir = cache_dir.unwrap_or_else(|| &project_dirs.cache_dir);
-    std::fs::create_dir_all(cache_dir)?;
+    let project_dirs = kv_project_dirs();
+    let temp_dir = tempfile::tempdir()?;
+    let cache_or_temp = if use_cache {
+        let cache_dir = cache_dir.unwrap_or_else(|| &project_dirs.cache_dir);
+        std::fs::create_dir_all(cache_dir)?;
 
-    let cache_path = cache_dir.join(format!("{}.pdf", hash_str));
-    if cache_path.exists() {
-        // read cache data
-        let cache_data = std::fs::read(&cache_path)?;
-        return render_pdf(&cache_data, conf_w, term_width, pages);
-    }
+        let cache_path = cache_dir.join(format!("{}.pdf", hash_str));
+        if cache_path.exists() {
+            // read cache data
+            let cache_data = std::fs::read(&cache_path)?;
+            return render_pdf(&cache_data, conf_w, term_width, pages);
+        }
+        cache_dir
+    } else {
+        temp_dir.path()
+    };
 
     // create temp file with name hash.extension
-    let temp_dir = tempfile::tempdir()?;
     let source_temp = temp_dir.path().join(format!("{}.{}", hash_str, extension));
     std::fs::write(&source_temp, data)?;
 
@@ -258,13 +264,13 @@ pub fn render_office(
         .arg("pdf")
         .arg(source_temp.as_os_str())
         .arg("--outdir")
-        .arg(cache_dir.as_os_str())
+        .arg(cache_or_temp.as_os_str())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
         .context("Failed to convert office document to PDF")?;
 
-    let pdf_path = cache_dir.join(format!("{}.pdf", hash_str));
+    let pdf_path = cache_or_temp.join(format!("{}.pdf", hash_str));
     let pdf_data = std::fs::read(&pdf_path)?;
     render_pdf(&pdf_data, conf_w, term_width, pages)
 }

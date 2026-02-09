@@ -1,14 +1,14 @@
-# rpix
+# kv
 
-A image viewer for the Kitty Terminal Graphics Protocol.
+A image and document viewer for the Kitty Terminal Graphics Protocol.
 
-**rpix** is a spiritual successor to `tpix`, rewritten in Rust with:
+**kv**, short for `Kitty Viewer`, is a spiritual successor to `tpix`, rewritten in Rust with:
 
 - 16-bit PNG support,
 - wider SVG support using `resvg`,
 - PDF support using `pdfium`,
 - HTML support using `headless_chrome`,
-- Office support using `libreoffice`,
+- Office support using `libreoffice` (and `pdfium` due to intermediate PDF representation, cached per default for performance),
 - Text output using `bat`.
 
 ## Installation
@@ -18,66 +18,70 @@ A image viewer for the Kitty Terminal Graphics Protocol.
 Ensure you have Rust installed.
 
 ```bash
-git clone https://github.com/audivir/rpix
-cd rpix
+git clone https://github.com/audivir/kv
+cd kv
 cargo build --release
-cp target/release/rpix ~/.local/bin/
+cp target/release/kv ~/.local/bin/
 ```
 
-For pdf support, download `libpdfium.dylib` or `libpdfium.so` from [pdfium](https://github.com/bblanchon/pdfium-binaries/releases) and copy it in the same directory as `rpix`, one of the system library paths, or add the directory containing `libpdfium` library to `DYLD_LIBRARY_PATH` on macOS or `LD_LIBRARY_PATH` on Linux.
-For html support, `headless_chrome` automatically downloads a chrome binary on the first run.
-For office support, `soffice` (from `libreoffice`) and `libpdfium` are required.
+For PDF support, download `libpdfium.dylib` or `libpdfium.so` from [pdfium](https://github.com/bblanchon/pdfium-binaries/releases) and copy it in the same directory as `kv`, one of the system library paths, or add the directory containing `libpdfium` library to `DYLD_LIBRARY_PATH` on macOS or `LD_LIBRARY_PATH` on Linux.
+For HTML support, `headless_chrome` automatically downloads a chrome binary on the first run.
+For Office support, `soffice` (from `libreoffice`) and `libpdfium` are required.
+
+> Caveats
 
 ## Usage
 
 ```bash
 # view single image
-rpix image.png
+kv image.png
 
 # view multiple images
-rpix image1.png image2.jpg logo.svg
+kv image1.png image2.jpg logo.svg
 
 # pipe from stdin
-cat photo.webp | rpix
+cat photo.webp | kv
 
 # resize to specific width
-rpix -w 500 image.png
+kv -w 500 image.png
 
 # force full terminal width
-rpix -f image.png
+kv -f image.png
 
 # view specific pages of a pdf file
-rpix -P 1-3,34 pdf.pdf
+kv -P 1-3,34 pdf.pdf
 
 # store a screenshot of an external domain as a png file
-rpix -o example.png https://example.org
+kv -o example.png https://example.org
 
 # view office documents
-rpix document.docx
+kv document.docx
 ```
 
 ### Options
 
-| Flag                 | Description                                                          |
-| -------------------- | -------------------------------------------------------------------- |
-| `-w`, `--width`      | Specify image width in pixels.                                       |
-| `-H`, `--height`     | Specify image height in pixels.                                      |
-| `-f`, `--fullwidth`  | Resize image to fill terminal width.                                 |
-| `-F`, `--fullheight` | Resize image to fill terminal height.                                |
-| `-r`, `--resize`     | Resize image to fill terminal.                                       |
-| `-n`, `--noresize`   | Disable automatic resizing (show original size).                     |
-| `-b`, `--background` | Add a background (useful for transparent images).                    |
-| `-C`, `--color`      | Set background color as hex string. Default: #FFFFFF.              |
-| `-m`, `--mode`       | Set transmission mode (png, zlib, raw). Default: png.                |
-| `-o`, `--output`     | Output to file as png, instead of kitty.                             |
-| `-x`, `--overwrite`  | Overwrite existing output file.                                      |
-| `-i`, `--input`      | Set input type (auto, image, svg, pdf, html). Default: auto.         |
-| `-P`, `--pages`      | Select pages to render (e.g. "1-3,34" or empty for all). Default: 1. |
-| `-A`, `--all`        | Select all pages.                                                    |
-| `-l`, `--language`   | Set language for syntax highlighting (e.g. "toml").                  |
-| `-p`, `--printname`  | Print the filename before image.                                     |
-| `-t`, `--tty`        | Force tty (ignore stdin check).                                      |
-| `-c`, `--clear`      | Clear the terminal (remove all images).                              |
+| Flag                 | Description                                                                           |
+| -------------------- | ------------------------------------------------------------------------------------- |
+| `-w`, `--width`      | Specify image width in pixels.                                                        |
+| `-H`, `--height`     | Specify image height in pixels.                                                       |
+| `-f`, `--fullwidth`  | Resize image to fill terminal width.                                                  |
+| `-F`, `--fullheight` | Resize image to fill terminal height.                                                 |
+| `-r`, `--resize`     | Resize image to fill terminal.                                                        |
+| `-n`, `--noresize`   | Disable automatic resizing (show original size).                                      |
+| `-b`, `--background` | Add a background (useful for transparent images).                                     |
+| `-C`, `--color`      | Set background color as hex string. Default: #FFFFFF.                                 |
+| `-m`, `--mode`       | Set transmission mode (png, zlib, raw). Default: png.                                 |
+| `-o`, `--output`     | Output to file as png, instead of kitty.                                              |
+| `-x`, `--overwrite`  | Overwrite existing output file.                                                       |
+| `-i`, `--input`      | Set input type (auto, image, svg, pdf, html, office). Default: auto.                  |
+| `-P`, `--pages`      | Select pages to render (e.g. "1-3,34" or empty for all). Default: 1.                  |
+| `-A`, `--all`        | Select all pages.                                                                     |
+| `-l`, `--language`   | Set language for syntax highlighting (e.g. "toml").                                   |
+| `-N`, `--no-newline` | Do not add a newline after text data missing each input. (might mess up the terminal) |
+| `-n`, `--no-cache`   | Do not cache office files.                                                            |
+| `-p`, `--printname`  | Print the filename before image.                                                      |
+| `-t`, `--tty`        | Force tty (ignore stdin check).                                                       |
+| `-c`, `--clear`      | Clear the terminal (remove all images).                                               |
 
 ## License
 

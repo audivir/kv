@@ -1,16 +1,16 @@
 use anyhow::{Context, Result};
 use base64::{engine::general_purpose, Engine as _};
+use bat::{Input, PrettyPrinter};
 use clap::{Parser, ValueEnum};
 use flate2::write::ZlibEncoder;
 use flate2::Compression;
 use image::codecs::png::PngEncoder;
 use image::imageops::FilterType;
 use image::{DynamicImage, GenericImageView, ImageEncoder};
-use rpix::*;
-use std::io::{self, Read, Write, Cursor};
+use kv::*;
+use std::io::{self, Cursor, Read, Write};
 use std::path::PathBuf;
 use tempfile::NamedTempFile;
-use bat::{PrettyPrinter,Input};
 
 const CHUNK_SIZE: usize = 4096;
 
@@ -150,7 +150,15 @@ struct Config {
     #[arg(short = 'l', long)]
     language: Option<String>,
 
-    /// Print filename before image
+    /// Do not add a newline after each input (might mess up the terminal)
+    #[arg(short = 'N', long)]
+    no_newline: bool,
+
+    /// Do not cache office files
+    #[arg(short = 'n', long)]
+    no_cache: bool,
+
+    /// Print filename before each input
     #[arg(short = 'p', long)]
     printname: bool,
 
@@ -263,7 +271,12 @@ enum PrinterInput {
     Data(Vec<u8>),
 }
 
-fn pretty_print(input: PrinterInput, language: Option<&str>, writer: &mut impl Write) -> Result<()> {
+fn pretty_print(
+    input: PrinterInput,
+    language: Option<&str>,
+    newline: bool,
+    writer: &mut impl Write,
+) -> Result<()> {
     let mut printer = PrettyPrinter::new();
     match input {
         PrinterInput::File(path) => printer.input_file(path),
@@ -278,7 +291,13 @@ fn pretty_print(input: PrinterInput, language: Option<&str>, writer: &mut impl W
     }
     let mut output = String::new();
     let _ = printer.print_with_writer(Some(&mut output));
+    // if it doesn't contain any new line, add a percent sign with white background
+    if newline && !output.ends_with("\n") {
+        output.push('\n');
+    }
     writer.write_all(output.as_bytes())?;
+    // flush the writer
+    writer.flush()?;
     Ok(())
 }
 
@@ -331,13 +350,14 @@ fn run(
         return Ok(1);
     };
 
-    let ctx = RpixContext {
+    let ctx = KvContext {
         input_type: conf.input.clone().into(),
         conf_w: conf.width,
         conf_h: conf.height,
         term_width: term_size.0,
         term_height: term_size.1,
         page_indices,
+        use_cache: !conf.no_cache,
         cache_dir,
     };
 
@@ -357,7 +377,12 @@ fn run(
                 }
             }
             Ok(LoadResult::Data(data)) => {
-                pretty_print(PrinterInput::Data(data), conf.language.as_deref(), &mut writer)?;
+                pretty_print(
+                    PrinterInput::Data(data),
+                    conf.language.as_deref(),
+                    !conf.no_newline,
+                    &mut writer,
+                )?;
             }
             Err(e) => {
                 writeln!(err_writer, "Error decoding stdin: {}", e)?;
@@ -378,7 +403,12 @@ fn run(
                     }
                 }
                 Ok(LoadResult::Data(_)) => {
-                    pretty_print(PrinterInput::File(path.clone()), conf.language.as_deref(), &mut writer)?;
+                    pretty_print(
+                        PrinterInput::File(path.clone()),
+                        conf.language.as_deref(),
+                        !conf.no_newline,
+                        &mut writer,
+                    )?;
                 }
                 Err(e) => {
                     writeln!(err_writer, "Error loading {}: {}", path.display(), e)?;

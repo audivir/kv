@@ -1536,6 +1536,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "kv"
+version = "0.1.13"
+dependencies = [
+ "anyhow",
+ "atty",
+ "base64",
+ "bat",
+ "clap",
+ "crossterm",
+ "directories",
+ "flate2",
+ "headless_chrome",
+ "hex",
+ "image",
+ "pdfium-render",
+ "resvg",
+ "rstest",
+ "sha2",
+ "tempfile",
+ "tiny-skia",
+ "usvg",
+]
+
+[[package]]
 name = "lebe"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2317,30 +2341,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f1964b10c76125c36f8afe190065a4bf9a87bf324842c05701330bba9f1cacbb"
 dependencies = [
  "memchr",
-]
-
-[[package]]
-name = "rpix"
-version = "0.1.10"
-dependencies = [
- "anyhow",
- "atty",
- "base64",
- "bat",
- "clap",
- "crossterm",
- "directories",
- "flate2",
- "headless_chrome",
- "hex",
- "image",
- "pdfium-render",
- "resvg",
- "rstest",
- "sha2",
- "tempfile",
- "tiny-skia",
- "usvg",
 ]
 
 [[package]]

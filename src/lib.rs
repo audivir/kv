@@ -28,13 +28,14 @@ pub enum InputType {
     Office,
 }
 
-pub struct RpixContext {
+pub struct KvContext {
     pub input_type: InputType,
     pub conf_w: Option<u32>,
     pub conf_h: Option<u32>,
     pub term_width: u32,
     pub term_height: u32,
     pub page_indices: Option<Vec<u16>>,
+    pub use_cache: bool,
     pub cache_dir: Option<PathBuf>,
 }
 
@@ -224,7 +225,7 @@ pub enum LoadResult {
     Data(Vec<u8>),
 }
 
-pub fn load_file(ctx: &RpixContext, path: &PathBuf) -> Result<LoadResult> {
+pub fn load_file(ctx: &KvContext, path: &PathBuf) -> Result<LoadResult> {
     let extension = path.extension().map_or("", |e| e.to_str().unwrap_or(""));
 
     #[cfg(feature = "html")]
@@ -243,7 +244,7 @@ pub fn load_file(ctx: &RpixContext, path: &PathBuf) -> Result<LoadResult> {
     load_data(ctx, &data, extension)
 }
 
-pub fn load_data(ctx: &RpixContext, data: &[u8], extension: &str) -> Result<LoadResult> {
+pub fn load_data(ctx: &KvContext, data: &[u8], extension: &str) -> Result<LoadResult> {
     if ctx.input_type == InputType::Text {
         return Ok(LoadResult::Data(data.to_vec()));
     }
@@ -283,6 +284,7 @@ pub fn load_data(ctx: &RpixContext, data: &[u8], extension: &str) -> Result<Load
             ctx.conf_w,
             ctx.term_width,
             ctx.page_indices.clone(),
+            ctx.use_cache,
             ctx.cache_dir.as_deref(),
         )?));
     }
