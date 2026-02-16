@@ -5,17 +5,15 @@ use image::{DynamicImage, GenericImageView};
 use rstest::rstest;
 use std::path::PathBuf;
 
-const WHITE: Rgba<u8> = Rgba([255, 255, 255, 255]);
-const BLACK: Rgba<u8> = Rgba([0, 0, 0, 255]);
-const TRANSPARENT: Rgba<u8> = Rgba([0, 0, 0, 0]);
-
 const PNG_DATA: &[u8] = include_bytes!("../fixtures/test.png");
 #[cfg(feature = "svg")]
 const SVG_DATA: &[u8] = include_bytes!("../fixtures/test.svg");
 
 fn default_ctx() -> KvContext {
+    let resize_fn = |img: &DynamicImage| -> (u32, u32) { img.dimensions() };
     KvContext {
         input_type: InputType::Auto,
+        resize_fn: Box::new(resize_fn),
         conf_w: None,
         conf_h: None,
         term_width: 100,
@@ -32,8 +30,8 @@ fn default_ctx() -> KvContext {
 #[case("FF0000", Rgba([255, 0, 0, 255]))]
 #[case("00FF00", Rgba([0, 255, 0, 255]))]
 #[case("0000FF", Rgba([0, 0, 255, 255]))]
-#[case("FFFFFF", Rgba([255, 255, 255, 255]))]
-#[case("000000", Rgba([0, 0, 0, 255]))]
+#[case("#FFFFFF", Rgba([255, 255, 255, 255]))]
+#[case("#000000", Rgba([0, 0, 0, 255]))]
 fn test_parse_color(#[case] color: &str, #[case] expected: Rgba<u8>) {
     let result = parse_color(color);
     assert!(result.is_ok());
@@ -43,33 +41,10 @@ fn test_parse_color(#[case] color: &str, #[case] expected: Rgba<u8>) {
 #[rstest]
 #[case("FF00")]
 #[case("FF000000")]
-#[case("FF00GG")]
+#[case("#FF00GG")]
 fn test_parse_color_invalid(#[case] color: &str) {
     let result = parse_color(color);
     assert!(result.is_err());
-}
-
-#[rstest]
-#[case(WHITE, TRANSPARENT, WHITE)]
-#[case(BLACK, TRANSPARENT, BLACK)]
-#[case(WHITE, BLACK, BLACK)]
-#[case(WHITE, Rgba([255, 0, 0, 128]), Rgba([255, 127, 127, 255]))]
-#[case(BLACK, Rgba([255, 0, 0, 128]), Rgba([128, 0, 0, 255]))]
-fn test_add_background(
-    #[case] color: Rgba<u8>,
-    #[case] src_pixel: Rgba<u8>,
-    #[case] expected_pixel: Rgba<u8>,
-) {
-    let mut img = DynamicImage::new_rgba8(1, 1); // 1x1 pixel
-    img.as_mut_rgba8().unwrap().put_pixel(0, 0, src_pixel); // black, 100% alpha
-
-    img = add_background(&img, &color);
-
-    let pixel = img.get_pixel(0, 0);
-    assert_eq!(
-        pixel, expected_pixel,
-        "Background color not applied correctly"
-    );
 }
 
 #[rstest]
@@ -234,7 +209,10 @@ fn test_load_data_svg(#[case] data: &[u8]) {
 
 #[rstest]
 #[case("nonexistent".as_bytes(), Some("Failed to decode input: The image format could not be determined"))]
-#[case("invalidbinary\x99\x98\x97\x96".as_bytes(), Some("Failed to decode input: The image format could not be determined"))]
+#[case(
+    b"invalidbinary\x99\x98\x97\x96",
+    Some("Failed to decode input: The image format could not be determined")
+)]
 #[case(
     b"",
     Some("Failed to decode input: The image format could not be determined")

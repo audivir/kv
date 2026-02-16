@@ -1,19 +1,61 @@
 use anyhow::{Context, Result};
-
-use image::{DynamicImage, Rgba, RgbaImage};
-
+use image::{DynamicImage, Rgba};
 use std::fs::File;
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
+use serde;
+
+mod config;
+pub use config::*;
 
 mod render;
+pub use render::*;
 
-use render::*;
+mod send;
+pub use send::*;
 
 #[cfg(test)]
 mod tests_lib;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+static PLUGINS: OnceLock<std::collections::HashMap<String, Plugin>> = OnceLock::new();
+
+#[derive(Debug)]
+pub enum LoadResult {
+    Image(DynamicImage),
+    Data(Vec<u8>),
+}
+
+/// Defines how the image should be resized relative to the terminal or explicit dimensions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResizeMode {
+    /// -n: Use the original image dimensions, even if they are larger than the terminal.
+    Original,
+    /// -r: Scale the terminal, both up or down, preserving aspect ratio.
+    FitTerminal,
+    /// -f: Force width to match terminal width, scaling height to preserve aspect ratio.
+    FitWidth,
+    /// -F: Force height to match terminal height, scaling width to preserve aspect ratio.
+    FitHeight,
+    /// -w / -H: Use one explicit dimension, scale the other to preserve aspect ratio.
+    Manual { width: Option<u32>, height: Option<u32> },
+    /// Use the original size but clip the image to the terminal size.
+    ClipTerminal,
+}
+
+/// Configuration for file caching (used for Office/PDF conversions).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CacheMode {
+    /// Disable caching; use temporary directories that are cleaned up on exit.
+    Disabled,
+    /// Use the system default cache directory (e.g., ~/.cache/kv or %LOCALAPPDATA%\kv).
+    Default,
+    /// Use a specific custom directory.
+    Custom(PathBuf),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum InputType {
     Auto,
     Image,
@@ -28,220 +70,174 @@ pub enum InputType {
     Office,
 }
 
+#[derive(Debug, Clone)]
 pub struct KvContext {
     pub input_type: InputType,
-    pub conf_w: Option<u32>,
-    pub conf_h: Option<u32>,
-    pub term_width: u32,
-    pub term_height: u32,
+    pub resize_mode: ResizeMode,
+    /// The detected terminal size (width, height).
+    pub term_size: (u32, u32),
     pub page_indices: Option<Vec<u16>>,
-    pub use_cache: bool,
-    pub cache_dir: Option<PathBuf>,
+    pub cache_mode: CacheMode,
+    pub background_color: Option<Rgba<u8>>,
 }
 
+/// Detects terminal size with fallbacks.
 pub fn get_term_size() -> (u32, u32) {
-    let mut width = 800; // ultimate fallback
-    let mut height = 400; // ultimate fallback
-    if let Ok(size) = crossterm::terminal::window_size() {
-        // try raw pixels
-        // fallback: if 0 pixels, estimate based on columns
-        let cols = size.columns as u32;
-        let rows = size.rows as u32;
+    let fallback = (800, 400);
 
-        if size.width > 0 {
-            width = size.width as u32;
-        } else if cols > 0 {
-            width = cols * 10;
+    match crossterm::terminal::window_size() {
+        Ok(size) => {
+            let cols = size.columns as u32;
+            let rows = size.rows as u32;
+
+            let width = if size.width > 0 {
+                size.width as u32
+            } else if cols > 0 {
+                cols * 10
+            } else {
+                fallback.0
+            };
+
+            let height = if size.height > 0 {
+                let h = size.height as u32;
+                // Adjust for prompt line and padding if we have column info
+                if cols > 0 { h * (rows.saturating_sub(2)) / rows } else { h }
+            } else if rows > 0 {
+                (rows.saturating_sub(2)) * 20
+            } else {
+                fallback.1
+            };
+
+            (width, height)
         }
-        // if possible adjust for the new prompt line and the empty line after the image
-        if size.height > 0 {
-            height = size.height as u32;
-            if cols > 0 {
-                height = height * (rows - 2) / rows;
-            }
-        } else if rows > 0 {
-            height = (rows - 2) * 20;
-        }
+        Err(_) => fallback,
     }
-    (width, height)
 }
 
+/// Parses a hex string (e.g., "#FFFFFF" or "FFFFFF") into an Rgba color.
 pub fn parse_color(color: &str) -> Result<Rgba<u8>> {
-    let color = color.trim_start_matches('#'); // Allow #FFFFFF
-    if color.len() != 6 {
-        return Err(anyhow::anyhow!("Invalid color format: {}", color));
+    let hex = color.trim_start_matches('#');
+    
+    if hex.len() != 6 {
+        anyhow::bail!("Invalid color format: must be 6 hex characters (e.g. #FFFFFF)");
     }
-    let r = u8::from_str_radix(&color[0..2], 16)?;
-    let g = u8::from_str_radix(&color[2..4], 16)?;
-    let b = u8::from_str_radix(&color[4..6], 16)?;
+
+    let r = u8::from_str_radix(&hex[0..2], 16).context("Invalid Red component")?;
+    let g = u8::from_str_radix(&hex[2..4], 16).context("Invalid Green component")?;
+    let b = u8::from_str_radix(&hex[4..6], 16).context("Invalid Blue component")?;
+
     Ok(Rgba([r, g, b, 255]))
 }
 
-pub fn add_background(img: &DynamicImage, color: &Rgba<u8>) -> DynamicImage {
-    let rgba = img.to_rgba8();
-    let (w, h) = rgba.dimensions();
-    let mut bg = RgbaImage::new(w, h);
-
-    let bg_r = color[0] as u32;
-    let bg_g = color[1] as u32;
-    let bg_b = color[2] as u32;
-
-    for (src, dst) in rgba.pixels().zip(bg.pixels_mut()) {
-        let alpha = src[3] as u32;
-
-        // if opaque, just copy it
-        if alpha == 255 {
-            *dst = *src;
-            continue;
-        }
-
-        // if transparent, use background color
-        if alpha == 0 {
-            *dst = *color;
-            continue;
-        }
-
-        // manual blending: src * alpha + bg * (1 - alpha)
-        let inv_alpha = 255 - alpha;
-
-        let r = (src[0] as u32 * alpha + bg_r * inv_alpha) / 255;
-        let g = (src[1] as u32 * alpha + bg_g * inv_alpha) / 255;
-        let b = (src[2] as u32 * alpha + bg_b * inv_alpha) / 255;
-
-        *dst = Rgba([r as u8, g as u8, b as u8, 255]);
-    }
-
-    DynamicImage::ImageRgba8(bg)
-}
-
+/// Calculates the final dimensions of the image based on the ResizeMode and Terminal Size.
 pub fn calculate_dimensions(
     img_dims: (u32, u32),
-    conf_size: (Option<u32>, Option<u32>),
-    fullwidth: bool,
-    fullheight: bool,
-    resize: bool,
-    noresize: bool,
+    mode: ResizeMode,
     term_size: (u32, u32),
 ) -> (u32, u32) {
-    let (orig_w, orig_h) = (img_dims.0 as f64, img_dims.1 as f64);
-    let mut width = conf_size.0.unwrap_or(0) as f64;
-    let mut height = conf_size.1.unwrap_or(0) as f64;
+    let (w, h) = (img_dims.0 as f64, img_dims.1 as f64);
+    let (tw, th) = (term_size.0 as f64, term_size.1 as f64);
 
-    let mut use_resize = resize;
-    let mut use_fullwidth = fullwidth;
-    let mut use_fullheight = fullheight;
+    // Helper to calculate aspect ratio scaling
+    let scale_to_width = |target_w: f64| (target_w, h * (target_w / w));
+    let scale_to_height = |target_h: f64| (w * (target_h / h), target_h);
 
-    // if neither noresize nor fullwidth nor fullheight is set,
-    // then resize if the image is larger than the terminal
-    if !noresize
-        && !use_fullwidth
-        && !use_fullheight
-        && ((orig_w > term_size.0.into() && term_size.0 > 0)
-            || (orig_h > term_size.1.into() && term_size.1 > 0))
-    {
-        use_resize = true;
-    }
+    let (final_w, final_h) = match mode {
+        ResizeMode::Original => (w, h),
+        
+        ResizeMode::FitTerminal | ResizeMode::ClipTerminal => {
+            // if clip terminal is enabled, scale only if the image is larger than the terminal
+            if mode == ResizeMode::FitTerminal || (tw > 0.0 && w > tw) || (th > 0.0 && h > th) {
+                let ratio = (tw / w).min(th / h);
+                (w * ratio, h * ratio)
+            } else {
+                (w, h)
+            }
+        },
 
-    if use_resize {
-        let aspect_w = orig_w / orig_h;
-        let aspect_h = orig_h / orig_w;
-        if aspect_w > aspect_h {
-            use_fullwidth = true;
-        } else {
-            use_fullheight = true;
-        }
-    }
+        ResizeMode::FitWidth => {
+            if tw > 0.0 { scale_to_width(tw) } else { (w, h) }
+        },
 
-    // if width or height is set, use it
-    if width > 0.0 && height == 0.0 {
-        height = orig_h * (width / orig_w);
-    } else if height > 0.0 && width == 0.0 {
-        width = orig_w * (height / orig_h);
-    // use full terminal width, scale height by aspect ratio
-    } else if use_fullwidth {
-        width = term_size.0.into();
-        height = orig_h * (width / orig_w);
-    // use full terminal height, scale width by aspect ratio
-    } else if use_fullheight {
-        height = term_size.1.into();
-        width = orig_w * (height / orig_h);
-    // use original size
-    } else {
-        width = orig_w;
-        height = orig_h;
-    }
-    (width.round() as u32, height.round() as u32)
+        ResizeMode::FitHeight => {
+            if th > 0.0 { scale_to_height(th) } else { (w, h) }
+        },
+
+        ResizeMode::Manual { width, height } => match (width, height) {
+            (Some(target_w), Some(target_h)) => (target_w as f64, target_h as f64),
+            (Some(target_w), None) => scale_to_width(target_w as f64),
+            (None, Some(target_h)) => scale_to_height(target_h as f64),
+            (None, None) => (w, h), // Should not happen given CLI logic, but safe fallback
+        },
+    };
+
+    (final_w.round() as u32, final_h.round() as u32)
 }
 
-// Parse a 1-indexed pages string to 0-indexed vector
+/// Parse a 1-indexed pages string (e.g., "1-3,5") to 0-indexed vector.
 pub fn parse_pages(pages: &str) -> Result<Option<Vec<u16>>> {
+    if pages.trim().is_empty() {
+        return Ok(None);
+    }
+
     let mut result = Vec::new();
+
     for part in pages.split(',') {
         let part = part.trim();
         if part.is_empty() {
             continue;
         }
-        if part.contains('-') {
-            let mut parts = part.split('-');
-            let start = parts
-                .next()
-                .context("Invalid page range")?
-                .trim()
-                .parse::<u16>()?;
-            let end = parts
-                .next()
-                .context("Invalid page range")?
-                .trim()
-                .parse::<u16>()?;
+
+        if let Some((start_str, end_str)) = part.split_once('-') {
+            let start: u16 = start_str.trim().parse().context("Invalid page range start")?;
+            let end: u16 = end_str.trim().parse().context("Invalid page range end")?;
+
             if start < 1 || end <= start {
-                return Err(anyhow::anyhow!(
-                    "Page range must start >= 1 and end > start"
-                ));
+                anyhow::bail!("Page range must start >= 1 and end > start");
             }
-            for i in start..=end {
-                result.push(i - 1);
-            }
+            result.extend((start..=end).map(|i| i - 1));
         } else {
-            let index = part.parse::<u16>().context("Invalid page index")?;
+            let index: u16 = part.parse().context("Invalid page index")?;
             if index < 1 {
-                return Err(anyhow::anyhow!("Page index must be >= 1"));
+                anyhow::bail!("Page index must be >= 1");
             }
             result.push(index - 1);
         }
     }
+
     if result.is_empty() {
-        return Ok(None);
+        Ok(None)
+    } else {
+        result.sort_unstable();
+        result.dedup();
+        Ok(Some(result))
     }
-    // sort and deduplicate
-    result.sort();
-    result.dedup();
-    Ok(Some(result))
 }
 
-// Load result is a enum
-#[derive(Debug)]
-pub enum LoadResult {
-    Image(DynamicImage),
-    Data(Vec<u8>),
-}
-
-pub fn load_file(ctx: &KvContext, path: &PathBuf) -> Result<LoadResult> {
-    let extension = path.extension().map_or("", |e| e.to_str().unwrap_or(""));
+pub fn load_file(ctx: &KvContext, path: &Path) -> Result<LoadResult> {
+    // Robustly handle extensions, even if non-UTF8 (though comparing to str requires utf8)
+    let extension = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
 
     #[cfg(feature = "html")]
     {
-        let path_bytes = path.to_str().unwrap().as_bytes();
-        if is_html(ctx, extension, path_bytes) {
-            let img = render_html_chrome(path_bytes)?;
+        // Safe string conversion for URL check
+        let path_lossy = path.to_string_lossy();
+        if is_html(ctx, &extension, path_lossy.as_bytes()) {
+            // Re-use the bytes of the path string strictly for HTML rendering
+            let img = render_html_chrome(ctx, path_lossy.as_bytes())?;
             return Ok(LoadResult::Image(img));
         }
     }
 
-    let mut file = File::open(path).context("Failed to open file")?;
+    let mut file = File::open(path).with_context(|| format!("Failed to open file: {}", path.display()))?;
     let mut data = Vec::new();
     file.read_to_end(&mut data)?;
 
-    load_data(ctx, &data, extension)
+    load_data(ctx, &data, &extension)
 }
 
 pub fn load_data(ctx: &KvContext, data: &[u8], extension: &str) -> Result<LoadResult> {
@@ -249,10 +245,17 @@ pub fn load_data(ctx: &KvContext, data: &[u8], extension: &str) -> Result<LoadRe
         return Ok(LoadResult::Data(data.to_vec()));
     }
 
+    let plugins = PLUGINS.get_or_init(load_plugins);
+
+    for plugin in plugins.values() {
+        if has_extension_or_magic_bytes(data, extension, plugin.magic_bytes.as_ref().unwrap_or(&vec![]), &plugin.extensions) {
+            return Ok(LoadResult::Image(render_plugin(ctx, data, plugin)?));
+        }
+    }
+
     if ctx.input_type == InputType::Image {
-        return Ok(LoadResult::Image(
-            image::load_from_memory(data).context("Failed to load image")?,
-        ));
+        let img = image::load_from_memory(data).context("Failed to load image")?;
+        return Ok(LoadResult::Image(render_image(ctx, img)?));
     }
 
     #[cfg(feature = "svg")]
@@ -261,32 +264,19 @@ pub fn load_data(ctx: &KvContext, data: &[u8], extension: &str) -> Result<LoadRe
         || data.starts_with(b"<svg")
         || data.starts_with(b"<?xml")
     {
-        return Ok(LoadResult::Image(render_svg(data)?));
+        return Ok(LoadResult::Image(render_svg(ctx, data)?));
     }
 
     #[cfg(feature = "pdf")]
     if ctx.input_type == InputType::Pdf || extension == "pdf" || data.starts_with(b"%PDF") {
-        return Ok(LoadResult::Image(render_pdf(
-            data,
-            ctx.conf_w,
-            ctx.term_width,
-            ctx.page_indices.clone(),
-        )?));
+        return Ok(LoadResult::Image(render_pdf(ctx, data)?));
     }
 
     #[cfg(feature = "office")]
     if ctx.input_type == InputType::Office
         || ["doc", "docx", "xls", "xlsx", "ppt", "pptx"].contains(&extension)
     {
-        return Ok(LoadResult::Image(render_office(
-            data,
-            extension,
-            ctx.conf_w,
-            ctx.term_width,
-            ctx.page_indices.clone(),
-            ctx.use_cache,
-            ctx.cache_dir.as_deref(),
-        )?));
+        return Ok(LoadResult::Image(render_office(ctx, data, extension)?));
     }
 
     #[cfg(feature = "html")]
@@ -294,19 +284,24 @@ pub fn load_data(ctx: &KvContext, data: &[u8], extension: &str) -> Result<LoadRe
         || data.starts_with(b"<html")
         || data.starts_with(b"<!DOCTYPE html")
     {
-        return Ok(LoadResult::Image(render_html_chrome(data)?));
+        return Ok(LoadResult::Image(render_html_chrome(ctx, data)?));
     }
 
-    // fallback for input_type == InputType::Auto
+    // Fallback for InputType::Auto
     match image::load_from_memory(data) {
-        Ok(img) => Ok(LoadResult::Image(img)),
+        Ok(img) => Ok(LoadResult::Image(render_image(ctx, img)?)),
         Err(err) => {
+            // Check if it's a valid UTF-8 string that points to a file path
             if let Ok(text) = std::str::from_utf8(data) {
                 let path_str = text.trim();
-                let path = PathBuf::from(path_str);
-                if path.exists() && path.is_file() {
-                    return load_file(ctx, &path);
+                // Basic check to avoid treating random text as paths
+                if !path_str.contains('\n') && !path_str.is_empty() {
+                    let path = PathBuf::from(path_str);
+                    if path.exists() && path.is_file() {
+                        return load_file(ctx, &path);
+                    }
                 }
+                // Determine it is just text data
                 return Ok(LoadResult::Data(data.to_vec()));
             }
             Err(anyhow::anyhow!("Failed to decode input: {}", err))

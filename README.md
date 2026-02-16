@@ -83,6 +83,7 @@ kv document.docx
 | `-p`, `--printname`  | Print the filename before image.                                                      |
 | `-t`, `--tty`        | Force tty (ignore stdin check).                                                       |
 | `-R`, `--remove`     | Remove all images from terminal.                                                      |
+| `--plugins`          | Print the plugins configuration file path (will be created if it doesn't exist).      |
 
 ## License
 

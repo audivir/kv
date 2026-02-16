@@ -1,27 +1,29 @@
 use anyhow::{Context, Result};
-use base64::{engine::general_purpose, Engine as _};
-use bat::{Input, PrettyPrinter};
 use clap::{Parser, ValueEnum};
-use flate2::write::ZlibEncoder;
-use flate2::Compression;
-use image::codecs::png::PngEncoder;
-use image::imageops::FilterType;
-use image::{DynamicImage, GenericImageView, ImageEncoder};
 use kv::*;
-use std::io::{self, Cursor, Read, Write};
+use std::io::{self, Read, Write, BufWriter};
 use std::path::PathBuf;
 use tempfile::NamedTempFile;
-
-const CHUNK_SIZE: usize = 4096;
+use crate::{send_image,pretty_print};
 
 #[cfg(test)]
 mod tests_main;
 
 #[derive(Debug, Clone, ValueEnum, PartialEq)]
-enum Mode {
+enum ModeOption {
     Png,
     Zlib,
     Raw,
+}
+
+impl From<ModeOption> for Mode {
+    fn from(arg: ModeOption) -> Self {
+        match arg {
+            ModeOption::Png => Mode::Png,
+            ModeOption::Zlib => Mode::Zlib,
+            ModeOption::Raw => Mode::Raw,
+        }
+    }
 }
 
 #[derive(Debug, Clone, ValueEnum, PartialEq)]
@@ -58,8 +60,9 @@ impl From<InputTypeOption> for InputType {
 }
 
 type TempAndFinalOption = Option<(NamedTempFile, PathBuf)>;
+
 /// A image viewer for the Kitty Terminal Graphics Protocol.
-#[derive(Parser, Debug)]
+#[derive(Parser, Debug, Clone)]
 #[command(author, version, about, long_about = None)]
 struct Config {
     /// Input files
@@ -123,8 +126,8 @@ struct Config {
     color: String,
 
     /// Set transmission mode
-    #[arg(short = 'm', long, value_enum, default_value_t = Mode::Png)]
-    mode: Mode,
+    #[arg(short = 'm', long, value_enum, default_value_t = ModeOption::Png)]
+    mode: ModeOption,
 
     /// Output to file as png, instead of kitty
     #[arg(short = 'o', long, conflicts_with = "mode")]
@@ -167,138 +170,12 @@ struct Config {
     tty: bool,
 
     /// Remove all images from terminal
-    #[arg(short = 'R', long)]
+    #[arg(short = 'R', long, conflicts_with="plugins")]
     remove: bool,
-}
 
-fn render_image(
-    mut writer: impl Write,
-    img: DynamicImage,
-    conf: &Config,
-    term_size: (u32, u32),
-) -> Result<()> {
-    let (w, h) = calculate_dimensions(
-        img.dimensions(),
-        (conf.width, conf.height),
-        conf.fullwidth,
-        conf.fullheight,
-        conf.resize,
-        conf.noresize,
-        term_size,
-    );
-    let mut final_img = img;
-
-    if w != 0 && h != 0 && (w != final_img.width() || h != final_img.height()) {
-        final_img = final_img.resize_exact(w, h, FilterType::Triangle);
-    }
-
-    if conf.background {
-        match parse_color(&conf.color) {
-            Ok(color) => final_img = add_background(&final_img, &color),
-            Err(e) => return Err(e),
-        }
-    }
-
-    let payload: Vec<u8>;
-    let header: String;
-
-    if conf.output.is_some() || conf.mode == Mode::Png {
-        // encode as png
-        let mut buffer = Vec::new();
-        let encoder = PngEncoder::new(&mut buffer);
-        let (width, height) = final_img.dimensions();
-        let color_type = final_img.color();
-
-        encoder.write_image(final_img.as_bytes(), width, height, color_type.into())?;
-
-        if conf.output.is_some() {
-            // write the raw bytes
-            writer.write_all(&buffer)?;
-            return Ok(());
-        }
-
-        payload = buffer;
-
-        // f=100 (PNG), no width/height data
-        header = "a=T,f=100,".to_string();
-    } else {
-        let (width, height) = final_img.dimensions();
-        let raw_bytes = final_img.to_rgba8().into_raw();
-
-        if conf.mode == Mode::Zlib {
-            // compress with zlib
-            let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
-            encoder.write_all(&raw_bytes)?;
-            payload = encoder.finish()?;
-        } else {
-            // Raw
-            payload = raw_bytes;
-        }
-
-        // f=32 (RGBA), o=z (compressed)
-        header = format!("a=T,f=32,s={},v={},o=z,", width, height);
-    }
-
-    // base64 encode payload
-    let encoded = general_purpose::STANDARD.encode(&payload);
-
-    let total_len = encoded.len();
-    let mut pos = 0;
-    let mut is_first = true;
-
-    while pos < total_len {
-        let end = std::cmp::min(pos + CHUNK_SIZE, total_len);
-        let chunk = &encoded[pos..end];
-        let more = if end < total_len { 1 } else { 0 };
-
-        write!(writer, "\x1b_G")?;
-        if is_first {
-            write!(writer, "{}", header)?;
-        }
-        write!(writer, "m={};", more)?;
-        writer.write_all(chunk.as_bytes())?;
-        write!(writer, "\x1b\\")?;
-
-        pos = end;
-        is_first = false;
-    }
-    writeln!(writer)?;
-    Ok(())
-}
-
-enum PrinterInput {
-    File(PathBuf),
-    Data(Vec<u8>),
-}
-
-fn pretty_print(
-    input: PrinterInput,
-    language: Option<&str>,
-    newline: bool,
-    writer: &mut impl Write,
-) -> Result<()> {
-    let mut printer = PrettyPrinter::new();
-    match input {
-        PrinterInput::File(path) => printer.input_file(path),
-        PrinterInput::Data(data) => {
-            let cursor = Cursor::new(data);
-            let printer = printer.input(Input::from_reader(cursor));
-            printer
-        }
-    };
-    if let Some(language) = language {
-        printer.language(language);
-    }
-    let mut output = String::new();
-    let _ = printer.print_with_writer(Some(&mut output));
-    // if it doesn't contain any new line, add a percent sign with white background
-    if newline && !output.ends_with("\n") {
-        output.push('\n');
-    }
-    writer.write_all(output.as_bytes())?;
-    // flush the writer
-    writer.flush()?;
-    Ok(())
+    /// Print the plugins configuration file path (will be created if it doesn't exist)
+    #[arg(long, conflicts_with="remove")]
+    plugins: bool,
 }
 
 fn run(
@@ -337,7 +214,7 @@ fn run(
         None
     } else if let Ok(pages) = parse_pages(&conf.pages) {
         // if pages != [0], disallow multiple files
-        if !use_stdin && conf.files.len() > 1 && pages != Some([0].to_vec()) {
+        if !use_stdin && conf.files.len() > 1 && pages != Some(vec![0]) {
             writeln!(
                 err_writer,
                 "Error: Cannot specify multiple files with non-default --pages option"
@@ -350,18 +227,44 @@ fn run(
         return Ok(1);
     };
 
-    let ctx = KvContext {
-        input_type: conf.input.clone().into(),
-        conf_w: conf.width,
-        conf_h: conf.height,
-        term_width: term_size.0,
-        term_height: term_size.1,
-        page_indices,
-        use_cache: !conf.no_cache,
-        cache_dir,
+    let resize_mode = if conf.noresize {
+        ResizeMode::Original
+    } else if conf.resize {
+        ResizeMode::FitTerminal
+    } else if conf.fullwidth {
+        ResizeMode::FitWidth
+    } else if conf.fullheight {
+        ResizeMode::FitHeight
+    } else if conf.width.is_some() || conf.height.is_some() {
+        ResizeMode::Manual { width: conf.width, height: conf.height }
+    } else {
+        ResizeMode::ClipTerminal
     };
 
-    if use_stdin {
+    let cache_mode = if conf.no_cache {
+        CacheMode::Disabled
+    } else if let Some(cache_dir) = cache_dir {
+        CacheMode::Custom(cache_dir)
+    } else {
+        CacheMode::Default
+    };
+
+    let background_color = if conf.background {
+        Some(parse_color(&conf.color)?)
+    } else {
+        None
+    };
+
+    let ctx = KvContext {
+        input_type: conf.input.clone().into(),
+        resize_mode,
+        term_size,
+        page_indices,
+        cache_mode,
+        background_color,
+    };
+
+if use_stdin {
         if conf.printname {
             writeln!(err_writer, "stdin")?;
         }
@@ -371,17 +274,19 @@ fn run(
 
         match load_data(&ctx, &data, "") {
             Ok(LoadResult::Image(img)) => {
-                if let Err(e) = render_image(&mut writer, img, &conf, term_size) {
-                    writeln!(err_writer, "Error rendering stdin: {}", e)?;
-                    return Ok(1);
-                }
+                send_image(
+                    &mut writer,
+                    img,
+                    conf.output.clone(),
+                    conf.mode.clone().into(),
+                )?;
             }
             Ok(LoadResult::Data(data)) => {
                 pretty_print(
+                    &mut writer,
                     PrinterInput::Data(data),
                     conf.language.as_deref(),
                     !conf.no_newline,
-                    &mut writer,
                 )?;
             }
             Err(e) => {
@@ -397,17 +302,19 @@ fn run(
             }
             match load_file(&ctx, path) {
                 Ok(LoadResult::Image(img)) => {
-                    if let Err(e) = render_image(&mut writer, img, &conf, term_size) {
-                        writeln!(err_writer, "Error rendering {}: {}", path.display(), e)?;
-                        exit_code = 1;
-                    }
+                    send_image(
+                        &mut writer,
+                        img,
+                        conf.output.clone(),
+                        conf.mode.clone().into(),
+                    )?;
                 }
                 Ok(LoadResult::Data(_)) => {
                     pretty_print(
+                        &mut writer,
                         PrinterInput::File(path.clone()),
                         conf.language.as_deref(),
                         !conf.no_newline,
-                        &mut writer,
                     )?;
                 }
                 Err(e) => {
@@ -460,21 +367,27 @@ fn prepare_writer(
                 parent.display()
             ))?;
 
-            let writer: Box<dyn Write> = Box::new(
-                tempfile
-                    .as_file()
-                    .try_clone()
-                    .context("Failed to clone temp file")?,
-            );
+            let file = tempfile
+                .as_file()
+                .try_clone()
+                .context("Failed to clone temp file")?;
+            
+            let writer: Box<dyn Write> = Box::new(BufWriter::new(file));
             Ok((writer, Some((tempfile, absolute_path))))
         }
 
-        None => Ok((Box::new(io::stdout()), None)),
+        None => Ok((Box::new(BufWriter::new(io::stdout())), None)),
     }
 }
 
 fn main() -> Result<()> {
     let conf = Config::parse();
+
+    if conf.plugins {
+        open_config()?;
+        return Ok(());
+    }
+
     let term_size = get_term_size();
 
     // Detect TTY status

@@ -1,17 +1,13 @@
 use anyhow::{Context, Result};
-use image::{DynamicImage, GenericImage, RgbaImage};
-use std::path::Path;
+use image::{DynamicImage,GenericImageView, GenericImage, Rgba, RgbaImage};
 use std::process::{Command,Stdio};
+use image::imageops::FilterType;
+use std::io::Write;
 
-#[cfg(not(target_os = "macos"))]
-use directories::ProjectDirs;
-
-#[cfg(target_os = "macos")]
-use std::env;
+use crate::{calculate_dimensions, ResizeMode, CacheMode,kv_project_dirs, Plugin};
 
 #[cfg(feature = "pdf")]
 use pdfium_render::prelude::{PdfRenderConfig, Pdfium};
-
 
 #[cfg(feature = "html")]
 use crate::{InputType, KvContext};
@@ -28,142 +24,143 @@ use headless_chrome::{Browser, LaunchOptions};
 #[cfg(feature = "office")]
 use sha2::{Digest, Sha256};
 
-
 #[cfg(test)]
 mod tests_render;
 
-struct Subdirs {
-    cache_dir: PathBuf,
-    data_dir: PathBuf,
-}
 
-#[cfg(not(target_os = "macos"))]
-fn kv_project_dirs() -> Subdirs {
-    // use original directories implementation
-    let project_dirs = ProjectDirs::from("de", "audivir", "kv").expect("Could not determine XDG directories");
-    Subdirs {
-        cache_dir: project_dirs.cache_dir().to_path_buf(),
-        data_dir: project_dirs.data_dir().to_path_buf(),
+pub fn add_background(img: &DynamicImage, color: &Rgba<u8>) -> DynamicImage {
+    let mut bg = RgbaImage::from_pixel(img.width(), img.height(), *color);
+    let rgba = img.to_rgba8();
+
+    for (dst, src) in bg.pixels_mut().zip(rgba.pixels()) {
+        let alpha = src[3] as u32;
+        if alpha == 255 {
+            *dst = *src;
+        } else if alpha > 0 {
+             // manual blending: src * alpha + bg * (1 - alpha)
+            let inv_alpha = 255 - alpha;
+            let bg_r = dst[0] as u32;
+            let bg_g = dst[1] as u32;
+            let bg_b = dst[2] as u32;
+
+            let r = (src[0] as u32 * alpha + bg_r * inv_alpha) / 255;
+            let g = (src[1] as u32 * alpha + bg_g * inv_alpha) / 255;
+            let b = (src[2] as u32 * alpha + bg_b * inv_alpha) / 255;
+
+            *dst = Rgba([r as u8, g as u8, b as u8, 255]);
+        }
     }
+
+    DynamicImage::ImageRgba8(bg)
 }
 
-#[cfg(target_os = "macos")]
-fn kv_project_dirs() -> Subdirs {
-    // use macos home dir, but linux style paths
-    let home_dir = env::home_dir().expect("Could not determine home directory");
+pub fn render_image(ctx: &KvContext, img: DynamicImage) -> Result<DynamicImage> {
+    let (w, h) = calculate_dimensions(img.dimensions(), ctx.resize_mode, ctx.term_size);
+    let mut final_img = img;
 
-    let cache_dir = env::var_os("XDG_CACHE_HOME")
-        .map(PathBuf::from)
-        .filter(|p| p.is_absolute())
-        .unwrap_or_else(|| home_dir.join(".cache"));
-
-    let data_dir = env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .filter(|p| p.is_absolute())
-        .unwrap_or_else(|| home_dir.join(".local/share"));
-
-    Subdirs {
-        cache_dir: cache_dir.join("kv"),
-        data_dir: data_dir.join("kv"),
+    if w != 0 && h != 0 && (w != final_img.width() || h != final_img.height()) {
+        final_img = final_img.resize_exact(w, h, FilterType::Triangle);
     }
-}
 
+    if let Some(color) = ctx.background_color {
+        final_img = add_background(&final_img, &color);
+    }
+    Ok(final_img)
+}
 
 #[cfg(feature = "svg")]
-pub fn render_svg(data: &[u8]) -> Result<DynamicImage> {
-    // load system fonts
+pub fn render_svg(ctx: &KvContext, data: &[u8]) -> Result<DynamicImage> {
     let mut fontdb = usvg::fontdb::Database::new();
     fontdb.load_system_fonts();
 
-    // configure options
     let opt = usvg::Options {
         fontdb: std::sync::Arc::new(fontdb),
         ..Default::default()
     };
 
-    // parse the SVG
     let tree = usvg::Tree::from_data(data, &opt).context("Failed to parse SVG")?;
-
-    // pixel buffer
     let size = tree.size().to_int_size();
-    let mut pixmap = tiny_skia::Pixmap::new(size.width(), size.height())
+    
+    let (new_w, new_h) = calculate_dimensions(
+        (size.width(), size.height()),
+        ctx.resize_mode,
+        ctx.term_size
+    );
+
+    let mut pixmap = tiny_skia::Pixmap::new(new_w, new_h)
         .ok_or_else(|| anyhow::anyhow!("Failed to create pixmap"))?;
 
-    resvg::render(&tree, tiny_skia::Transform::default(), &mut pixmap.as_mut());
+    if let Some(color) = ctx.background_color {
+        pixmap.fill(tiny_skia::Color::from_rgba8(color[0], color[1], color[2], color[3]));
+    }
 
-    // convert to DynamicImage
-    let buffer = RgbaImage::from_raw(size.width(), size.height(), pixmap.data().to_vec())
+    let scale_x = new_w as f32 / size.width() as f32;
+    let scale_y = new_h as f32 / size.height() as f32;
+    let transform = tiny_skia::Transform::from_scale(scale_x, scale_y);
+
+    resvg::render(&tree, transform, &mut pixmap.as_mut());
+
+    let buffer = RgbaImage::from_raw(new_w, new_h, pixmap.data().to_vec())
         .ok_or_else(|| anyhow::anyhow!("Failed buffer conversion"))?;
 
     Ok(DynamicImage::ImageRgba8(buffer))
 }
 
 #[cfg(feature = "pdf")]
-pub fn render_pdf(
-    data: &[u8],
-    conf_w: Option<u32>,
-    term_width: u32,
-    page_indices: Option<Vec<u16>>,
-) -> Result<DynamicImage> {
-    let width = conf_w
-        .unwrap_or(term_width)
-        .try_into()
-        .context("Failed to convert width to i32")?;
+pub fn render_pdf(ctx: &KvContext, data: &[u8]) -> Result<DynamicImage> {
+    let width = match ctx.resize_mode {
+        ResizeMode::Manual { width: Some(w), .. } => w,
+        ResizeMode::FitWidth | ResizeMode::FitTerminal => ctx.term_size.0,
+        _ => if ctx.term_size.0 > 0 { ctx.term_size.0 } else { 800 },
+    };
 
     let pdfium = Pdfium::new(
         Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("./"))
-            .or_else(|_| {
-                Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("./pdfium/"))
-            })
-            .or_else(|_| {
-                Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path(
-                    "/opt/homebrew/lib",
-                ))
-            })
-            .or_else(|_| {
-                Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path(
-                    "/usr/local/lib",
-                ))
-            })
+            .or_else(|_| Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("./pdfium/")))
+            .or_else(|_| Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("/opt/homebrew/lib")))
+            .or_else(|_| Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("/usr/local/lib")))
             .or_else(|_| Pdfium::bind_to_system_library())?,
     );
 
     let config = PdfRenderConfig::new()
-        .set_target_width(width)
+        .set_target_width(width.try_into().unwrap_or(800))
         .render_form_data(true);
+        
     let document = pdfium.load_pdf_from_byte_slice(data, None)?;
     let pages = document.pages();
     let n_pages = pages.len();
-    let selected_indices = if let Some(page_indices) = page_indices {
+    
+    let selected_indices = if let Some(page_indices) = &ctx.page_indices {
         if page_indices.iter().any(|&i| i >= n_pages) {
             anyhow::bail!("Page index out of range (must be <= {})", n_pages);
         }
-        page_indices
+        page_indices.clone()
     } else {
         (0..n_pages).collect()
     };
 
-    let mut images: Vec<RgbaImage> = Vec::new();
-    for page_index in selected_indices.iter() {
-        let page = pages
-            .get(*page_index)
-            .context(format!("Failed to get page {}", page_index))?;
+    let mut images: Vec<RgbaImage> = Vec::with_capacity(selected_indices.len());
+    for page_index in selected_indices {
+        let page = pages.get(page_index).context(format!("Failed to get page {}", page_index))?;
         let bitmap = page.render_with_config(&config)?;
-        let image = bitmap.as_image().to_rgba8();
-        images.push(image);
+        images.push(bitmap.as_image().to_rgba8());
     }
+
     if images.is_empty() {
         anyhow::bail!("No pages found in PDF");
     }
-    let max_width = images.iter().map(|img| img.width()).max().unwrap();
+
+    let max_width = images.iter().map(|img| img.width()).max().unwrap_or(0);
     let total_height = images.iter().map(|img| img.height()).sum::<u32>();
+    
     let mut combined = RgbaImage::new(max_width, total_height);
     let mut current_y = 0;
     for img in images {
         combined.copy_from(&img, 0, current_y)?;
         current_y += img.height();
     }
-    Ok(DynamicImage::ImageRgba8(combined))
+    
+    render_image(ctx, DynamicImage::ImageRgba8(combined))
 }
 
 #[cfg(feature = "html")]
@@ -182,7 +179,7 @@ pub fn is_html(ctx: &KvContext, extension: &str, s: &[u8]) -> bool {
 }
 
 #[cfg(feature = "html")]
-pub fn render_html_chrome(data: &[u8]) -> Result<DynamicImage> {
+pub fn render_html_chrome(ctx: &KvContext, data: &[u8]) -> Result<DynamicImage> {
     let data_str = std::str::from_utf8(data)?;
     let url: String = if is_url_str(data_str) {
         data_str.to_owned()
@@ -211,7 +208,8 @@ pub fn render_html_chrome(data: &[u8]) -> Result<DynamicImage> {
     tab.navigate_to(&url)?;
     tab.wait_for_element("body")?;
     let png_data = tab.capture_screenshot(CaptureScreenshotFormatOption::Png, None, None, true)?;
-    Ok(image::load_from_memory(&png_data)?)
+    let img = image::load_from_memory(&png_data)?;
+    render_image(ctx, img)
 }
 
 
@@ -223,37 +221,37 @@ use win as sys;
 
 #[cfg(feature = "office")]
 pub fn render_office(
+    ctx: &KvContext,
     data: &[u8],
     extension: &str,
-    conf_w: Option<u32>,
-    term_width: u32,
-    pages: Option<Vec<u16>>,
-    use_cache: bool,
-    cache_dir: Option<&Path>,
 ) -> Result<DynamicImage> {
     let hash = Sha256::digest(data);
     let hash_str = hex::encode(hash);
 
     // convert to pdf with libreoffice (soffice command)
     let project_dirs = kv_project_dirs();
-    let temp_dir = tempfile::tempdir()?;
-    let cache_or_temp = if use_cache {
-        let cache_dir = cache_dir.unwrap_or_else(|| &project_dirs.cache_dir);
-        std::fs::create_dir_all(cache_dir)?;
-
-        let cache_path = cache_dir.join(format!("{}.pdf", hash_str));
-        if cache_path.exists() {
-            // read cache data
-            let cache_data = std::fs::read(&cache_path)?;
-            return render_pdf(&cache_data, conf_w, term_width, pages);
-        }
-        cache_dir
-    } else {
-        temp_dir.path()
+    let temp_dir_guard = tempfile::tempdir()?; // Keep guard alive
+    
+    let (target_dir, is_persistent) = match &ctx.cache_mode {
+        CacheMode::Disabled => (temp_dir_guard.path().to_path_buf(), false),
+        CacheMode::Default => (project_dirs.cache_dir.clone(), true),
+        CacheMode::Custom(path) => (path.clone(), true),
     };
 
+    if is_persistent {
+        std::fs::create_dir_all(&target_dir)
+            .context("Failed to create cache directory")?;
+            
+        // Check if cached PDF already exists
+        let cache_path = target_dir.join(format!("{}.pdf", hash_str));
+        if cache_path.exists() {
+            let cache_data = std::fs::read(&cache_path)?;
+            return render_pdf(ctx, &cache_data);
+        }
+    }
+
     // create temp file with name hash.extension
-    let source_temp = temp_dir.path().join(format!("{}.{}", hash_str, extension));
+    let source_temp = target_dir.join(format!("{}.{}", hash_str, extension));
     std::fs::write(&source_temp, data)?;
 
     eprintln!("Converting office document to PDF...");
@@ -264,13 +262,89 @@ pub fn render_office(
         .arg("pdf")
         .arg(source_temp.as_os_str())
         .arg("--outdir")
-        .arg(cache_or_temp.as_os_str())
+        .arg(target_dir.as_os_str())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
         .context("Failed to convert office document to PDF")?;
 
-    let pdf_path = cache_or_temp.join(format!("{}.pdf", hash_str));
+    let pdf_path = target_dir.join(format!("{}.pdf", hash_str));
     let pdf_data = std::fs::read(&pdf_path)?;
-    render_pdf(&pdf_data, conf_w, term_width, pages)
+    render_pdf(ctx, &pdf_data)
+}
+
+pub fn render_plugin(ctx: &KvContext, data: &[u8], plugin: &Plugin) -> Result<DynamicImage> {
+    let temp_dir_guard = tempfile::tempdir()?;
+    let mut command_parts = shell_words::split(&plugin.path)
+        .context("Invalid command string in plugin config")?;
+    
+    if command_parts.is_empty() {
+        anyhow::bail!("Plugin command is empty");
+    }
+
+    let program = command_parts.remove(0);
+    let mut cmd = Command::new(program);
+    
+    if let Some(placeholder) = &plugin.placeholder {
+        // mode: file input (replace placeholder with temp path)
+        let input_path = temp_dir_guard.path().join("input_tmp");
+        std::fs::write(&input_path, data)?;
+        let input_path_str = input_path.to_string_lossy().to_string();
+
+        let mut replaced = false;
+        for arg in command_parts {
+            if arg.contains(placeholder) {
+                cmd.arg(arg.replace(placeholder, &input_path_str));
+                replaced = true;
+            } else {
+                cmd.arg(arg);
+            }
+        }
+
+        if !replaced {
+            anyhow::bail!("Placeholder not found in plugin command arguments");
+        }
+
+        cmd.stdout(Stdio::piped());
+        cmd.stderr(Stdio::inherit());
+    } else {
+        // mode: stdin
+        cmd.args(command_parts);
+        cmd.stdin(Stdio::piped());
+        cmd.stdout(Stdio::piped());
+        cmd.stderr(Stdio::inherit());
+    }
+
+    let mut child = cmd.spawn().context("Failed to spawn plugin command")?;
+
+    if plugin.placeholder.is_none() {
+        if let Some(mut stdin) = child.stdin.take() {
+            stdin.write_all(data).context("Failed to write to plugin stdin")?;
+        }
+    }
+
+    let output = child.wait_with_output().context("Plugin execution failed")?;
+
+    if !output.status.success() {
+        anyhow::bail!("Plugin exited with error code: {:?}", output.status.code());
+    }
+
+    match plugin.output {
+        #[cfg(feature = "svg")]
+        InputType::Svg => render_svg(ctx, &output.stdout),
+
+        #[cfg(feature = "pdf")]
+        InputType::Pdf => render_pdf(ctx, &output.stdout),
+
+        #[cfg(feature = "html")]
+        InputType::Html => render_html_chrome(ctx, &output.stdout),
+
+        // TODO: handle image, text, office, etc.
+        _ => {
+            // Fallback: Try to load as image
+             let img = image::load_from_memory(&output.stdout)
+                 .context("Failed to decode plugin output as image")?;
+             render_image(ctx, img)
+        }
+    }
 }
