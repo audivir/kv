@@ -58,12 +58,12 @@ jobs:
           if [[ "${{ matrix.target }}" == *"windows"* ]]; then BIN_NAME="kv.exe"; fi
 
           mkdir -p ./dist
-          cp target/${{ matrix.target }}/release/$BIN_NAME ./dist/
+          cp target/${{ matrix.target }}/release/$BIN_NAME ./dist/${{ matrix.name }}
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.target }}
+          name: ${{ matrix.name }}
           path: dist/*
           retention-days: 1
 
