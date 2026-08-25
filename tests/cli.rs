@@ -1,3 +1,4 @@
+// test helpers mirror many independent CLI flags, so this file allows many-argument functions
 #![allow(clippy::too_many_arguments)]
 
 use kv::*;
