@@ -151,7 +151,9 @@ pub fn render_pdf(ctx: &KvContext, data: &[u8]) -> Result<DynamicImage> {
         }
     };
 
-    let _guard = PDFIUM_LOCK.lock().unwrap();
+    let _guard = PDFIUM_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let pdfium = get_pdfium()?;
 
     let config = PdfRenderConfig::new()

@@ -50,7 +50,7 @@ impl From<InputTypeOption> for InputType {
     }
 }
 
-/// A image viewer for the Kitty Terminal Graphics Protocol.
+/// An image viewer for the Kitty Terminal Graphics Protocol.
 #[derive(Parser, Debug, Clone)]
 #[command(author, version, about, long_about = None)]
 pub struct Config {

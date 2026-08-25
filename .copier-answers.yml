@@ -1,7 +1,7 @@
 # Changes here will be overwritten by Copier
 _commit: 1a45ad8
 _src_path: gh:audivir/copier-template
-description: A image viewer for the Kitty Terminal Graphics Protocol
+description: An image viewer for the Kitty Terminal Graphics Protocol
 github_org: audivir
 project_name: kv
 project_slug: kv

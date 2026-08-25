@@ -1,6 +1,6 @@
 # kv
 
-A image and document viewer for the Kitty Terminal Graphics Protocol.
+An image and document viewer for the Kitty Terminal Graphics Protocol.
 
 **kv**, short for `Kitty Viewer`, is a spiritual successor to `tpix`, rewritten in Rust with:
 
