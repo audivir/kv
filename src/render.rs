@@ -233,6 +233,8 @@ pub fn render_html_chrome(ctx: &KvContext, data: &[u8]) -> Result<DynamicImage> 
         headless: true,
         path: None,
         user_data_dir: Some(user_data_dir),
+        // avoids Chrome crashing when /dev/shm is small or restricted, as in CI/containers
+        args: vec![std::ffi::OsStr::new("--disable-dev-shm-usage")],
         ..Default::default()
     })?;
     let tab = browser.new_tab()?;

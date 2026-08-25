@@ -1,6 +1,11 @@
 use image::{DynamicImage, GenericImageView, Rgba};
 use kv::*;
 use rstest::rstest;
+use std::sync::Mutex;
+
+// cargo test runs cases in parallel by default; serialize Chrome launches so a
+// resource-limited CI runner isn't spawning several full browser processes at once.
+static CHROME_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 const SVG_DATA: &[u8] = include_bytes!("fixtures/test.svg");
 const PDF_DATA: &[u8] = include_bytes!("fixtures/test.pdf");
@@ -95,6 +100,9 @@ fn test_render_pdf_out_of_range(#[case] page_indices: Vec<u16>) {
 #[case(b"tests/fixtures/test.html")]
 #[case(b"https://upload.wikimedia.org/wikipedia/commons/b/b9/Solid_red.png")]
 fn test_render_html_chrome(#[case] html_data: &[u8]) {
+    let _guard = CHROME_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let ctx = ctx_with(ResizeMode::Original, (100, 50), None);
     let result = render_html_chrome(&ctx, html_data);
     assert!(result.is_ok(), "HTML generation failed");
