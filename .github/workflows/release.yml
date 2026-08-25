@@ -50,6 +50,12 @@ jobs:
       - name: Install libheif (macOS)
         if: runner.os == 'macOS'
         run: brew install libheif
+      - name: Install libheif (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          vcpkg install libheif:x64-windows-static-md
+          echo "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" >> $env:GITHUB_ENV
       - run: cargo build --release --target ${{ matrix.target }}
       - name: Package binary
         shell: bash
