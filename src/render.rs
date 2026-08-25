@@ -4,6 +4,7 @@ use image::{DynamicImage, GenericImage, GenericImageView, ImageReader, Rgba, Rgb
 use libheif_rs::integration::image::register_all_decoding_hooks;
 use std::io::{Cursor, Write};
 use std::process::{Command, Stdio};
+use std::sync::{Mutex, OnceLock};
 
 use crate::{CacheMode, Plugin, ResizeMode, calculate_dimensions, kv_project_dirs};
 
@@ -17,9 +18,6 @@ use headless_chrome::protocol::cdp::Page::CaptureScreenshotFormatOption;
 use headless_chrome::{Browser, LaunchOptions};
 
 use sha2::{Digest, Sha256};
-
-#[cfg(test)]
-mod tests_render;
 
 pub fn add_background(img: &DynamicImage, color: &Rgba<u8>) -> DynamicImage {
     let mut bg = RgbaImage::from_pixel(img.width(), img.height(), *color);
@@ -47,13 +45,7 @@ pub fn add_background(img: &DynamicImage, color: &Rgba<u8>) -> DynamicImage {
     DynamicImage::ImageRgba8(bg)
 }
 
-pub fn render_image(ctx: &KvContext, data: &[u8]) -> Result<DynamicImage> {
-    register_all_decoding_hooks();
-    let mut img = ImageReader::new(Cursor::new(&data))
-        .with_guessed_format()
-        .context("Failed to guess image format")?
-        .decode()
-        .context("Failed to decode image data")?;
+fn postprocess_image(ctx: &KvContext, mut img: DynamicImage) -> DynamicImage {
     let (w, h) = calculate_dimensions(img.dimensions(), ctx.resize_mode, ctx.term_size);
 
     if w != 0 && h != 0 && (w != img.width() || h != img.height()) {
@@ -63,7 +55,17 @@ pub fn render_image(ctx: &KvContext, data: &[u8]) -> Result<DynamicImage> {
     if let Some(color) = ctx.background_color {
         img = add_background(&img, &color);
     }
-    Ok(img)
+    img
+}
+
+pub fn render_image(ctx: &KvContext, data: &[u8]) -> Result<DynamicImage> {
+    register_all_decoding_hooks();
+    let img = ImageReader::new(Cursor::new(&data))
+        .with_guessed_format()
+        .context("Failed to guess image format")?
+        .decode()
+        .context("Failed to decode image data")?;
+    Ok(postprocess_image(ctx, img))
 }
 
 pub fn render_svg(ctx: &KvContext, data: &[u8]) -> Result<DynamicImage> {
@@ -105,6 +107,37 @@ pub fn render_svg(ctx: &KvContext, data: &[u8]) -> Result<DynamicImage> {
     Ok(DynamicImage::ImageRgba8(buffer))
 }
 
+static PDFIUM: OnceLock<Pdfium> = OnceLock::new();
+// Pdfium's FFI is not safe to call from multiple threads concurrently, even across
+// unrelated documents, and its library bindings are process-global (a second bind
+// attempt fails with `PdfiumLibraryBindingsAlreadyInitialized`). This lock serializes
+// every use of `get_pdfium()`'s result, not just the one-time bind.
+static PDFIUM_LOCK: Mutex<()> = Mutex::new(());
+
+fn get_pdfium() -> Result<&'static Pdfium> {
+    if let Some(pdfium) = PDFIUM.get() {
+        return Ok(pdfium);
+    }
+
+    let bindings = Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("./"))
+        .or_else(|_| {
+            Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("./pdfium/"))
+        })
+        .or_else(|_| {
+            Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path(
+                "/opt/homebrew/lib",
+            ))
+        })
+        .or_else(|_| {
+            Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path(
+                "/usr/local/lib",
+            ))
+        })
+        .or_else(|_| Pdfium::bind_to_system_library())?;
+
+    Ok(PDFIUM.get_or_init(|| Pdfium::new(bindings)))
+}
+
 pub fn render_pdf(ctx: &KvContext, data: &[u8]) -> Result<DynamicImage> {
     let width = match ctx.resize_mode {
         ResizeMode::Manual { width: Some(w), .. } => w,
@@ -118,23 +151,8 @@ pub fn render_pdf(ctx: &KvContext, data: &[u8]) -> Result<DynamicImage> {
         }
     };
 
-    let pdfium = Pdfium::new(
-        Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("./"))
-            .or_else(|_| {
-                Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("./pdfium/"))
-            })
-            .or_else(|_| {
-                Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path(
-                    "/opt/homebrew/lib",
-                ))
-            })
-            .or_else(|_| {
-                Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path(
-                    "/usr/local/lib",
-                ))
-            })
-            .or_else(|_| Pdfium::bind_to_system_library())?,
-    );
+    let _guard = PDFIUM_LOCK.lock().unwrap();
+    let pdfium = get_pdfium()?;
 
     let config = PdfRenderConfig::new()
         .set_target_width(width.try_into().unwrap_or(800))
@@ -145,21 +163,21 @@ pub fn render_pdf(ctx: &KvContext, data: &[u8]) -> Result<DynamicImage> {
     let n_pages = pages.len();
 
     let selected_indices = if let Some(page_indices) = &ctx.page_indices {
-        if page_indices.iter().any(|&i| i >= n_pages) {
+        if page_indices.iter().any(|&i| i32::from(i) >= n_pages) {
             anyhow::bail!("Page index out of range (must be <= {})", n_pages);
         }
         page_indices.clone()
     } else {
-        (0..n_pages).collect()
+        (0..n_pages).map(|i| i as u16).collect()
     };
 
     let mut images: Vec<RgbaImage> = Vec::with_capacity(selected_indices.len());
     for page_index in selected_indices {
         let page = pages
-            .get(page_index)
+            .get(page_index.into())
             .context(format!("Failed to get page {}", page_index))?;
         let bitmap = page.render_with_config(&config)?;
-        images.push(bitmap.as_image().to_rgba8());
+        images.push(bitmap.as_image()?.to_rgba8());
     }
 
     if images.is_empty() {
@@ -175,8 +193,7 @@ pub fn render_pdf(ctx: &KvContext, data: &[u8]) -> Result<DynamicImage> {
         combined.copy_from(&img, 0, current_y)?;
         current_y += img.height();
     }
-    let data = combined.as_raw();
-    render_image(ctx, data)
+    Ok(postprocess_image(ctx, DynamicImage::ImageRgba8(combined)))
 }
 
 fn is_url(s: &[u8]) -> bool {
@@ -288,10 +305,10 @@ pub fn render_plugin(ctx: &KvContext, data: &[u8], plugin: &Plugin) -> Result<Dy
     let program = command_parts.remove(0);
     let mut cmd = Command::new(program);
 
-    if let (Some(i), Some(o)) = (&plugin.placeholder, &plugin.output_placeholder) {
-        if i == o {
-            anyhow::bail!("Input placeholder equals output placeholder");
-        }
+    if let (Some(i), Some(o)) = (&plugin.placeholder, &plugin.output_placeholder)
+        && i == o
+    {
+        anyhow::bail!("Input placeholder equals output placeholder");
     }
 
     let mut input_path_opts = None;
@@ -321,7 +338,7 @@ pub fn render_plugin(ctx: &KvContext, data: &[u8], plugin: &Plugin) -> Result<Dy
     }
 
     // This ensures "{{}}" is checked before "{}" automatically
-    replacements.sort_by(|(p1, _, _), (p2, _, _)| p2.len().cmp(&p1.len()));
+    replacements.sort_by_key(|(p, _, _)| std::cmp::Reverse(p.len()));
 
     for arg in command_parts {
         let mut final_arg = arg;

@@ -1,10 +1,12 @@
-// implementation tests
-use super::*;
+#![allow(clippy::too_many_arguments)]
+
+use kv::*;
 use rstest::rstest;
 use std::io::Cursor;
+use std::path::PathBuf;
 
 const NO_FILES_MSG: &str = "Error: No input files provided and no data piped to stdin.\n";
-const SVG_DATA: &[u8] = include_bytes!("../tests/fixtures/test.svg");
+const SVG_DATA: &[u8] = include_bytes!("fixtures/test.svg");
 
 // dummy config
 fn default_conf() -> Config {
@@ -30,6 +32,7 @@ fn default_conf() -> Config {
         printname: true, // default to true for tests
         tty: false,
         remove: false,
+        plugins: false,
     }
 }
 
@@ -118,12 +121,6 @@ fn test_resize(
     );
 }
 
-// --background, --color
-// TODO: implement
-
-// --input
-// TODO: implement
-
 #[test]
 fn test_output() {
     // get temp file path but do not create file
@@ -156,7 +153,7 @@ fn test_output() {
 #[case(vec![],"0", false, "Error: Invalid page range\n")]
 #[case(vec![],"-1", false, "Error: Invalid page range\n")]
 #[case(vec!["tests/fixtures/test.pdf".into()],"2", false, "tests/fixtures/test.pdf\nError loading tests/fixtures/test.pdf: Page index out of range (must be <= 1)\n")]
-#[case(vec!["tests/fixtures/test.pdf".into(),"tests/fixtures/test.png".into()],"1", false, "Error: Cannot specify multiple files with --pages\n")]
+#[case(vec!["tests/fixtures/test.pdf".into(),"tests/fixtures/test.png".into()],"2", false, "Error: Cannot specify multiple files with non-default --pages option\n")]
 #[case(vec!["tests/fixtures/test.pdf".into()],"1", true, "tests/fixtures/test.pdf\n")]
 fn test_pages(
     #[case] files: Vec<PathBuf>,
@@ -325,7 +322,7 @@ fn test_no_input() {
 #[rstest]
 #[case(vec!["tests/fixtures/test.png".into()], "tests/fixtures/test.png\n", 0)]
 #[case(vec!["tests/fixtures/test.jpg".into(), "tests/fixtures/test.png".into()], "tests/fixtures/test.jpg\ntests/fixtures/test.png\n", 0)]
-#[case(vec!["tests/fixtures/test.png".into(), "nonexistent".into()], "tests/fixtures/test.png\nnonexistent\nError loading nonexistent: Failed to open file\n", 1)]
+#[case(vec!["tests/fixtures/test.png".into(), "nonexistent".into()], "tests/fixtures/test.png\nnonexistent\nError loading nonexistent: Failed to open file: nonexistent\n", 1)]
 fn test_files(
     #[case] files: Vec<PathBuf>,
     #[case] expected_error: &str,

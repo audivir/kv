@@ -1,6 +1,5 @@
 use anyhow::{Context, Result};
 use image::{DynamicImage, Rgba};
-use serde;
 use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -15,8 +14,8 @@ pub use render::*;
 mod send;
 pub use send::*;
 
-#[cfg(test)]
-mod tests_lib;
+mod cli;
+pub use cli::*;
 
 static PLUGINS: OnceLock<std::collections::HashMap<String, Plugin>> = OnceLock::new();
 

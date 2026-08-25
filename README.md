@@ -61,29 +61,29 @@ kv document.docx
 
 ### Options
 
-| Flag                 | Description                                                                           |
+| Flag | Description |
 | -------------------- | ------------------------------------------------------------------------------------- |
-| `-w`, `--width`      | Specify image width in pixels.                                                        |
-| `-H`, `--height`     | Specify image height in pixels.                                                       |
-| `-f`, `--fullwidth`  | Resize image to fill terminal width.                                                  |
-| `-F`, `--fullheight` | Resize image to fill terminal height.                                                 |
-| `-r`, `--resize`     | Resize image to fill terminal.                                                        |
-| `-n`, `--noresize`   | Disable automatic resizing (show original size).                                      |
-| `-b`, `--background` | Add a background (useful for transparent images).                                     |
-| `-c`, `--color`      | Set background color as hex string. Default: #FFFFFF.                                 |
-| `-m`, `--mode`       | Set transmission mode (png, zlib, raw). Default: png.                                 |
-| `-o`, `--output`     | Output to file as png, instead of kitty.                                              |
-| `-x`, `--overwrite`  | Overwrite existing output file.                                                       |
-| `-i`, `--input`      | Set input type (auto, image, svg, pdf, html, office). Default: auto.                  |
-| `-P`, `--pages`      | Select pages to render (e.g. "1-3,34" or empty for all). Default: 1.                  |
-| `-A`, `--all`        | Select all pages.                                                                     |
-| `-l`, `--language`   | Set language for syntax highlighting (e.g. "toml").                                   |
+| `-w`, `--width` | Specify image width in pixels. |
+| `-H`, `--height` | Specify image height in pixels. |
+| `-f`, `--fullwidth` | Resize image to fill terminal width. |
+| `-F`, `--fullheight` | Resize image to fill terminal height. |
+| `-r`, `--resize` | Resize image to fill terminal. |
+| `-n`, `--noresize` | Disable automatic resizing (show original size). |
+| `-b`, `--background` | Add a background (useful for transparent images). |
+| `-c`, `--color` | Set background color as hex string. Default: #FFFFFF. |
+| `-m`, `--mode` | Set transmission mode (png, zlib, raw). Default: png. |
+| `-o`, `--output` | Output to file as png, instead of kitty. |
+| `-x`, `--overwrite` | Overwrite existing output file. |
+| `-i`, `--input` | Set input type (auto, image, svg, pdf, html, office). Default: auto. |
+| `-P`, `--pages` | Select pages to render (e.g. "1-3,34" or empty for all). Default: 1. |
+| `-A`, `--all` | Select all pages. |
+| `-l`, `--language` | Set language for syntax highlighting (e.g. "toml"). |
 | `-N`, `--no-newline` | Do not add a newline after text data missing each input. (might mess up the terminal) |
-| `-C`, `--no-cache`   | Do not cache office files.                                                            |
-| `-p`, `--printname`  | Print the filename before image.                                                      |
-| `-t`, `--tty`        | Force tty (ignore stdin check).                                                       |
-| `-R`, `--remove`     | Remove all images from terminal.                                                      |
-| `--plugins`          | Print the plugins configuration file path (will be created if it doesn't exist).      |
+| `-C`, `--no-cache` | Do not cache office files. |
+| `-p`, `--printname` | Print the filename before image. |
+| `-t`, `--tty` | Force tty (ignore stdin check). |
+| `-R`, `--remove` | Remove all images from terminal. |
+| `--plugins` | Print the plugins configuration file path (will be created if it doesn't exist). |
 
 ## Plugins
 

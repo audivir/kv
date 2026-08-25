@@ -104,10 +104,11 @@ pub fn has_extension_or_magic_bytes(
 ) -> bool {
     for hex_str in magic_hex_list {
         // remove spaces and convert hex string to byte vector
-        if let Ok(magic) = hex::decode(hex_str.replace(" ", "")) {
-            if data.len() >= magic.len() && &data[0..magic.len()] == magic.as_slice() {
-                return true;
-            }
+        if let Ok(magic) = hex::decode(hex_str.replace(" ", ""))
+            && data.len() >= magic.len()
+            && &data[0..magic.len()] == magic.as_slice()
+        {
+            return true;
         }
     }
 

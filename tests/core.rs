@@ -1,29 +1,21 @@
-// unit tests
-use super::*;
 use image::Rgba;
-use image::{DynamicImage, GenericImageView};
+use kv::*;
 use rstest::rstest;
 use std::path::PathBuf;
 
-const PNG_DATA: &[u8] = include_bytes!("../fixtures/test.png");
-const SVG_DATA: &[u8] = include_bytes!("../fixtures/test.svg");
+const PNG_DATA: &[u8] = include_bytes!("fixtures/test.png");
+const SVG_DATA: &[u8] = include_bytes!("fixtures/test.svg");
 
 fn default_ctx() -> KvContext {
-    let resize_fn = |img: &DynamicImage| -> (u32, u32) { img.dimensions() };
     KvContext {
         input_type: InputType::Auto,
-        resize_fn: Box::new(resize_fn),
-        conf_w: None,
-        conf_h: None,
-        term_width: 100,
-        term_height: 50,
+        resize_mode: ResizeMode::Original,
+        term_size: (100, 50),
         page_indices: None,
-        use_cache: false,
-        cache_dir: None,
+        cache_mode: CacheMode::Disabled,
+        background_color: None,
     }
 }
-// get_term_size
-// TODO: implement test
 
 #[rstest]
 #[case("FF0000", Rgba([255, 0, 0, 255]))]
@@ -47,48 +39,25 @@ fn test_parse_color_invalid(#[case] color: &str) {
 }
 
 #[rstest]
-#[case(100, 50, Some(50), None, false, false, false, false, 50, 25)] // explicit width
-#[case(100, 50, None, Some(25), false, false, false, false, 50, 25)] // explicit height
-#[case(1000, 500, None, None, false, false, false, false, 100, 50)] // auto-downscale
-#[case(50, 50, None, None, true, false, false, false, 100, 100)] // fullwidth
-#[case(200, 25, None, None, false, true, false, false, 400, 50)] // fullheight
-#[case(500, 500, None, None, false, false, true, false, 50, 50)] // resize (bound by height)
-#[case(1000, 200, None, None, false, false, true, false, 100, 20)] // resize (bound by width)
-#[case(1000, 500, None, None, false, false, false, true, 1000, 500)] // noresize
+#[case(100, 50, ResizeMode::Manual { width: Some(50), height: None }, 50, 25)] // explicit width
+#[case(100, 50, ResizeMode::Manual { width: None, height: Some(25) }, 50, 25)] // explicit height
+#[case(1000, 500, ResizeMode::ClipTerminal, 100, 50)] // auto-downscale
+#[case(50, 50, ResizeMode::FitWidth, 100, 100)] // fullwidth
+#[case(200, 25, ResizeMode::FitHeight, 400, 50)] // fullheight
+#[case(500, 500, ResizeMode::FitTerminal, 50, 50)] // resize (bound by height)
+#[case(1000, 200, ResizeMode::FitTerminal, 100, 20)] // resize (bound by width)
+#[case(1000, 500, ResizeMode::Original, 1000, 500)] // noresize
 fn test_calculate_dimensions(
     #[case] img_w: u32,
     #[case] img_h: u32,
-    #[case] conf_w: Option<u32>,
-    #[case] conf_h: Option<u32>,
-    #[case] fullwidth: bool,
-    #[case] fullheight: bool,
-    #[case] resize: bool,
-    #[case] noresize: bool,
+    #[case] mode: ResizeMode,
     #[case] expected_w: u32,
     #[case] expected_h: u32,
 ) {
     let img_dims = (img_w, img_h);
-    let term_width = 100; // fixed
-    let term_height = 50; // fixed
+    let term_size = (100, 50); // fixed
 
-    // quick sanity check for exclusive options
-    assert!(!(fullwidth && fullheight));
-    assert!(!(resize && noresize));
-    assert!(!((resize || noresize) && (fullwidth || fullheight)));
-    assert!(
-        !((conf_w.is_some() || conf_h.is_some())
-            && (fullwidth || fullheight || resize || noresize))
-    );
-
-    let (w, h) = calculate_dimensions(
-        img_dims,
-        (conf_w, conf_h),
-        fullwidth,
-        fullheight,
-        resize,
-        noresize,
-        (term_width, term_height),
-    );
+    let (w, h) = calculate_dimensions(img_dims, mode, term_size);
 
     assert_eq!(w, expected_w);
     assert_eq!(h, expected_h);
@@ -127,9 +96,9 @@ fn test_parse_pages_invalid(#[case] input: &str) {
 }
 
 #[rstest]
-#[case(PathBuf::from("fixtures/test.svg"), InputType::Svg)]
-#[case(PathBuf::from("fixtures/test.png"), InputType::Image)]
-#[case(PathBuf::from("fixtures/test.pdf"), InputType::Pdf)]
+#[case(PathBuf::from("tests/fixtures/test.svg"), InputType::Svg)]
+#[case(PathBuf::from("tests/fixtures/test.png"), InputType::Image)]
+#[case(PathBuf::from("tests/fixtures/test.pdf"), InputType::Pdf)]
 fn test_load_file(#[case] path: PathBuf, #[case] input_type: InputType) {
     let mut ctx = default_ctx();
     ctx.input_type = input_type;
@@ -140,16 +109,16 @@ fn test_load_file(#[case] path: PathBuf, #[case] input_type: InputType) {
 }
 
 #[rstest]
-#[case(PathBuf::from("nonexistent"), InputType::Auto, "Failed to open file")]
+#[case(PathBuf::from("nonexistent"), InputType::Auto, "Failed to open file: nonexistent")]
 #[case(
-    PathBuf::from("fixtures/test.random"),
+    PathBuf::from("tests/fixtures/test.random"),
     InputType::Auto,
-    "Failed to decode input: The image format could not be determined"
+    "Failed to decode input: Failed to decode image data"
 )]
 #[case(
-    PathBuf::from("fixtures/test.svg"),
+    PathBuf::from("tests/fixtures/test.svg"),
     InputType::Image,
-    "Failed to load image"
+    "Failed to decode image data"
 )]
 fn test_load_file_invalid(
     #[case] path: PathBuf,
@@ -165,12 +134,12 @@ fn test_load_file_invalid(
 
 #[rstest]
 #[case(
-    PathBuf::from("fixtures/test.png"),
+    PathBuf::from("tests/fixtures/test.png"),
     InputType::Svg,
     "Failed to parse SVG"
 )]
 #[case(
-    PathBuf::from("fixtures/test.pdf"),
+    PathBuf::from("tests/fixtures/test.pdf"),
     InputType::Svg,
     "Failed to parse SVG"
 )]
@@ -187,7 +156,7 @@ fn test_load_file_invalid_svg(
 }
 
 #[rstest]
-#[case("fixtures/test.png".as_bytes())]
+#[case("tests/fixtures/test.png".as_bytes())]
 #[case(PNG_DATA)]
 fn test_load_data(#[case] data: &[u8]) {
     let ctx = default_ctx();
@@ -196,7 +165,7 @@ fn test_load_data(#[case] data: &[u8]) {
 }
 
 #[rstest]
-#[case("fixtures/test.svg".as_bytes())]
+#[case("tests/fixtures/test.svg".as_bytes())]
 #[case(SVG_DATA)]
 fn test_load_data_svg(#[case] data: &[u8]) {
     let ctx = default_ctx();
@@ -205,20 +174,24 @@ fn test_load_data_svg(#[case] data: &[u8]) {
 }
 
 #[rstest]
-#[case("nonexistent".as_bytes(), Some("Failed to decode input: The image format could not be determined"))]
-#[case(
-    b"invalidbinary\x99\x98\x97\x96",
-    Some("Failed to decode input: The image format could not be determined")
-)]
-#[case(
-    b"",
-    Some("Failed to decode input: The image format could not be determined")
-)]
-fn test_load_data_invalid(#[case] data: &[u8], #[case] err_msg: Option<&str>) {
+#[case(b"invalidbinary\x99\x98\x97\x96")]
+fn test_load_data_invalid(#[case] data: &[u8]) {
     let ctx = default_ctx();
     let result = load_data(&ctx, data, "");
-    // assert!(result.is_err());
-    assert_eq!(result.unwrap_err().to_string(), err_msg.unwrap());
+    assert_eq!(
+        result.unwrap_err().to_string(),
+        "Failed to decode input: Failed to decode image data"
+    );
+}
+
+// non-image UTF-8 text that isn't a valid path falls back to plain-text data, not an error
+#[rstest]
+#[case("nonexistent".as_bytes())]
+#[case(b"")]
+fn test_load_data_text_fallback(#[case] data: &[u8]) {
+    let ctx = default_ctx();
+    let result = load_data(&ctx, data, "");
+    assert!(matches!(result.unwrap(), LoadResult::Data(d) if d == data));
 }
 
 #[rstest]
