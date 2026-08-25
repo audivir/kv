@@ -233,7 +233,10 @@ pub fn render_html_chrome(ctx: &KvContext, data: &[u8]) -> Result<DynamicImage> 
         headless: true,
         path: None,
         user_data_dir: Some(user_data_dir),
-        // avoids Chrome crashing when /dev/shm is small or restricted, as in CI/containers
+        // Chrome's sandbox setup can hang indefinitely in restricted environments
+        // (containers, some CI runners); disabling it is standard practice for
+        // headless automation. avoids Chrome crashing when /dev/shm is small too.
+        sandbox: false,
         args: vec![std::ffi::OsStr::new("--disable-dev-shm-usage")],
         ..Default::default()
     })?;

@@ -19,7 +19,7 @@ jobs:
       - uses: j178/prek-action@v3.0.0
   tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       - name: Install libheif
@@ -29,13 +29,4 @@ jobs:
       - name: Install pdfium
         run: |
           curl -sL "https://github.com/bblanchon/pdfium-binaries/releases/latest/download/pdfium-linux-x64.tgz" | sudo tar xz -C /usr/local lib/libpdfium.so
-      - name: Diagnose headless Chrome
-        run: |
-          which google-chrome-stable || echo "google-chrome-stable not found in PATH"
-          google-chrome-stable --version || true
-          set +e
-          timeout 30 google-chrome-stable --headless --no-sandbox --disable-dev-shm-usage --disable-gpu --dump-dom about:blank
-          status=$?
-          set -e
-          echo "chrome dump-dom exit code: $status"
       - run: cargo test --workspace --all-features
