@@ -247,11 +247,6 @@ pub fn render_html_chrome(ctx: &KvContext, data: &[u8]) -> Result<DynamicImage> 
     render_image(ctx, &png_data)
 }
 
-#[cfg(target_os = "windows")]
-mod win;
-#[cfg(target_os = "windows")]
-use win as sys;
-
 pub fn render_office(ctx: &KvContext, data: &[u8], extension: &str) -> Result<DynamicImage> {
     let hash = Sha256::digest(data);
     let hash_str = hex::encode(hash);
