@@ -107,6 +107,14 @@ output = "image"
 path = "gs -q -dSAFER -dBATCH -dNOPAUSE -sDEVICE=pngalpha -r300 -dEPSCrop -sOutputFile=- -"
 ```
 
+## Roadmap
+
+Planned, not yet implemented:
+
+- Fallback rendering (Sixel, iTerm2, Unicode blocks) for terminals without the Kitty graphics protocol,
+- animated GIF and video playback,
+- directory/gallery browsing.
+
 ## License
 
 MIT License. See [LICENSE](LICENSE) for details.
