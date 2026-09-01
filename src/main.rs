@@ -53,6 +53,13 @@ fn prepare_writer(
 }
 
 fn main() -> Result<()> {
+    // resvg/usvg reports unresolved fonts via `log::warn!`, not a `Result`. Default to "warn"
+    // so those reach stderr instead of vanishing; RUST_LOG can override it.
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn"))
+        .format_timestamp(None)
+        .format_target(false)
+        .init();
+
     let conf = Config::parse();
 
     if conf.plugins {

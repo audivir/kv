@@ -68,9 +68,75 @@ pub fn render_image(ctx: &KvContext, data: &[u8]) -> Result<DynamicImage> {
     Ok(postprocess_image(ctx, img))
 }
 
+fn has_face(db: &usvg::fontdb::Database, name: &str) -> bool {
+    db.faces()
+        .any(|face| face.families.iter().any(|(n, _)| n.eq_ignore_ascii_case(name)))
+}
+
+// the built-in monospace default of fontdb ("Courier New") rarely exists outside Windows.
+// Try a short per-platform candidate list and keep whichever face is actually installed.
+fn resolve_monospace_family(db: &usvg::fontdb::Database) -> String {
+    let candidates: &[&str] = if cfg!(target_os = "macos") {
+        &["Menlo", "Monaco"]
+    } else if cfg!(target_os = "windows") {
+        &["Consolas", "Lucida Console"]
+    } else {
+        &["DejaVu Sans Mono", "Liberation Mono"]
+    };
+
+    match candidates.iter().find(|candidate| has_face(db, candidate)) {
+        Some(candidate) => candidate.to_string(),
+        None => db.family_name(&usvg::fontdb::Family::Monospace).to_string(),
+    }
+}
+
+// SVGs often name a font literally (`font-family="Arial"`) instead of a generic keyword.
+// Alias each missing name to a metric-compatible open font already on the system.
+const NAMED_FONT_FALLBACKS: &[(&str, &[&str])] = &[
+    ("Arial", &["Liberation Sans", "Arimo", "DejaVu Sans"]),
+    ("Helvetica", &["Liberation Sans", "Arimo", "DejaVu Sans"]),
+    ("Times New Roman", &["Liberation Serif", "Tinos", "DejaVu Serif"]),
+    ("Courier New", &["Liberation Mono", "Cousine", "DejaVu Sans Mono"]),
+];
+
+fn alias_missing_named_fonts(db: &mut usvg::fontdb::Database) {
+    for (missing, candidates) in NAMED_FONT_FALLBACKS {
+        if has_face(db, missing) {
+            continue;
+        }
+
+        let Some(substitute) = candidates.iter().find(|candidate| has_face(db, candidate)) else {
+            continue;
+        };
+
+        let aliased: Vec<_> = db
+            .faces()
+            .filter(|face| {
+                face.families
+                    .iter()
+                    .any(|(name, _)| name.eq_ignore_ascii_case(substitute))
+            })
+            .cloned()
+            .collect();
+
+        log::warn!("'{missing}' is not installed. Substituting '{substitute}' instead.");
+        for mut face in aliased {
+            face.id = usvg::fontdb::ID::dummy();
+            face.families.insert(
+                0,
+                ((*missing).to_string(), usvg::fontdb::Language::English_UnitedStates),
+            );
+            db.push_face_info(face);
+        }
+    }
+}
+
 pub fn render_svg(ctx: &KvContext, data: &[u8]) -> Result<DynamicImage> {
     let mut fontdb = usvg::fontdb::Database::new();
     fontdb.load_system_fonts();
+    alias_missing_named_fonts(&mut fontdb);
+    let monospace_family = resolve_monospace_family(&fontdb);
+    fontdb.set_monospace_family(monospace_family);
 
     let opt = usvg::Options {
         fontdb: std::sync::Arc::new(fontdb),
