@@ -7,9 +7,8 @@ An image and document viewer for the Kitty Terminal Graphics Protocol.
 - 16-bit PNG support,
 - wider SVG support using `resvg`,
 - PDF support using `pdfium`,
-- HTML support using `headless_chrome`,
-- Office documents (docx, xlsx, pptx, ...) rendered as Markdown by default using `anydoc`, or as an image via `libreoffice`/`pdfium` with `--pdf` (cached per default for performance),
-- Markdown rendering (headings, tables, lists, inline images, ...) using `pulldown-cmark-mdcat`, with images shown inline via the Kitty Graphics Protocol,
+- HTML files and Office documents (docx, xlsx, pptx, ...) rendered as Markdown by default (using `htmd`/`anydoc`), or as an image via Chrome/`libreoffice`+`pdfium` with `--external` (cached per default for performance),
+- Markdown rendering (headings, tables, lists, inline images, ...) using `pulldown-cmark-mdcat`, with images shown inline via the Kitty Graphics Protocol, including images embedded in raw HTML and remote images fetched over HTTP(S),
 - Text output using `bat`.
 
 ## Installation
@@ -17,10 +16,10 @@ An image and document viewer for the Kitty Terminal Graphics Protocol.
 ### Prerequisites
 
 - For PDF support, download `libpdfium.dylib` or `libpdfium.so` from [pdfium](https://github.com/bblanchon/pdfium-binaries/releases) and copy it in the same directory as `kv`, one of the system library paths, or add the directory containing `libpdfium` library to `DYLD_LIBRARY_PATH` on macOS or `LD_LIBRARY_PATH` on Linux.
-- For HTML support, `headless_chrome` automatically downloads a chrome binary on the first run.
-- Office documents render as Markdown by default; no external tool is required. Images embedded in the source document (or referenced by a relative path next to a `.md` file) render inline via the Kitty Graphics Protocol.
-- For `--pdf` (Office rendered as an image via an intermediate PDF), `soffice` (from `libreoffice`) and `libpdfium` are required.
-  > Caveats: Office files are cached per default for performance. Use `-C`/`--no-cache` to disable caching. If `soffice` is not found on `PATH`, `--pdf` falls back to Markdown rendering with a warning.
+- Local HTML files and Office documents render as Markdown by default; no external tool is required. Images embedded in the source document (or referenced by a relative/HTTP(S) path) render inline via the Kitty Graphics Protocol.
+- URLs passed directly (e.g. `kv https://example.org`) always render as a live screenshot via Chrome, regardless of `--external`; `headless_chrome` automatically downloads a Chrome binary on the first run.
+- For `--external` (Office/HTML rendered as an image instead of Markdown), `soffice` (from `libreoffice`), `libpdfium`, and Chrome are required, depending on the input.
+  > Caveats: Office files are cached per default for performance. Use `-C`/`--no-cache` to disable caching. If `soffice` is not found on `PATH`, `--external` falls back to Markdown rendering with a warning (Office documents only, not HTML).
 
 ### From Source
 
@@ -64,7 +63,13 @@ kv document.docx
 kv -P 1-2 workbook.xlsx
 
 # render an office document as an image instead, via an intermediate PDF
-kv --pdf document.docx
+kv --external document.docx
+
+# view a local html file, rendered as markdown with inline images (badges, ...)
+kv page.html
+
+# render a local html file as an image instead, via Chrome
+kv --external page.html
 
 # view a markdown file directly, with inline images
 kv README.md
@@ -91,7 +96,8 @@ kv README.md
 | `-l`, `--language` | Set language for syntax highlighting (e.g. "toml"). |
 | `-N`, `--no-newline` | Do not add a newline after text data missing each input. (might mess up the terminal) |
 | `-C`, `--no-cache` | Do not cache office files. |
-| `--pdf` | Render Office documents as an image via an intermediate PDF, instead of the default Markdown rendering. Falls back to Markdown with a warning if `soffice` is unavailable. |
+| `--external` | Render Office/HTML as an image (soffice/Chrome) instead of Markdown. URLs always use Chrome. |
+| `--theme` | Color scheme for Markdown code block syntax highlighting (light, dark). Default: dark. |
 | `-p`, `--printname` | Print the filename before image. |
 | `-t`, `--tty` | Force tty (ignore stdin check). |
 | `-R`, `--remove` | Remove all images from terminal. |

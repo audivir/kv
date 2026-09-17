@@ -4,8 +4,8 @@ use std::io::{Read, Write};
 use std::path::PathBuf;
 
 use crate::{
-    CacheMode, InputType, KvContext, LoadResult, Mode, PrinterInput, ResizeMode, load_data,
-    load_file, parse_color, parse_pages, pretty_print, send_image,
+    CacheMode, ColorScheme, InputType, KvContext, LoadResult, Mode, PrinterInput, ResizeMode,
+    load_data, load_file, parse_color, parse_pages, pretty_print, send_image,
 };
 
 #[derive(Debug, Clone, ValueEnum, PartialEq)]
@@ -21,6 +21,21 @@ impl From<ModeOption> for Mode {
             ModeOption::Png => Mode::Png,
             ModeOption::Zlib => Mode::Zlib,
             ModeOption::Raw => Mode::Raw,
+        }
+    }
+}
+
+#[derive(Debug, Clone, ValueEnum, PartialEq)]
+pub enum ThemeOption {
+    Light,
+    Dark,
+}
+
+impl From<ThemeOption> for ColorScheme {
+    fn from(arg: ThemeOption) -> Self {
+        match arg {
+            ThemeOption::Light => ColorScheme::Light,
+            ThemeOption::Dark => ColorScheme::Dark,
         }
     }
 }
@@ -162,10 +177,13 @@ pub struct Config {
     #[arg(short = 'C', long)]
     pub no_cache: bool,
 
-    /// Render Office documents as an image via an intermediate PDF instead of converting them to
-    /// Markdown (the default). Falls back to Markdown with a warning if `soffice` is unavailable.
+    /// Render Office/HTML as an image (soffice/Chrome) instead of Markdown. URLs always use Chrome.
     #[arg(long)]
-    pub pdf: bool,
+    pub external: bool,
+
+    /// Color scheme for Markdown code block syntax highlighting
+    #[arg(long, value_enum, default_value_t = ThemeOption::Dark)]
+    pub theme: ThemeOption,
 
     /// Print filename before each input
     #[arg(short = 'p', long)]
@@ -271,7 +289,8 @@ pub fn run(
         page_indices,
         cache_mode,
         background_color,
-        render_as_pdf: conf.pdf,
+        render_as_external: conf.external,
+        color_scheme: conf.theme.clone().into(),
     };
 
     if use_stdin {
@@ -296,6 +315,7 @@ pub fn run(
                     &mut writer,
                     PrinterInput::Data(data),
                     conf.language.as_deref(),
+                    ctx.color_scheme.theme_name(),
                     !conf.no_newline,
                 )?;
             }
@@ -327,6 +347,7 @@ pub fn run(
                         &mut writer,
                         PrinterInput::File(path.clone()),
                         conf.language.as_deref(),
+                        ctx.color_scheme.theme_name(),
                         !conf.no_newline,
                     )?;
                 }

@@ -30,7 +30,8 @@ fn default_conf() -> Config {
         language: None,
         no_newline: false,
         no_cache: false,
-        pdf: false,
+        external: false,
+        theme: ThemeOption::Dark,
         printname: true, // default to true for tests
         tty: false,
         remove: false,

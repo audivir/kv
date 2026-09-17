@@ -1,6 +1,6 @@
 [package]
 name = "kv"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2024"
 description = "An image viewer for the Kitty Terminal Graphics Protocol"
 
@@ -48,11 +48,11 @@ env_logger = { version = "0.11.11", default-features = false, features = [
 # markdown
 pulldown-cmark = "0.13"
 pulldown-cmark-mdcat = "2"
-syntect = { version = "5", default-features = false, features = [
-  "parsing",
-  "default-syntaxes",
-] }
+htmd = "0.5"
+syntect = { version = "5", default-features = false, features = ["parsing"] }
 url = "2"
+ureq = "3"
+mime = "0.3"
 
 [dev-dependencies]
 rstest = "0.26.1"

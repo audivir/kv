@@ -110,6 +110,7 @@ pub fn pretty_print(
     writer: &mut dyn Write,
     input: PrinterInput,
     language: Option<&str>,
+    theme: &str,
     newline: bool,
 ) -> Result<()> {
     let mut printer = PrettyPrinter::new();
@@ -127,6 +128,7 @@ pub fn pretty_print(
     if let Some(lang) = language {
         printer.language(lang);
     }
+    printer.theme(theme);
 
     // capture output to handle the optional newline
     let mut output_str = String::new();

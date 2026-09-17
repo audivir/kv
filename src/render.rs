@@ -264,7 +264,7 @@ pub fn render_pdf(ctx: &KvContext, data: &[u8]) -> Result<DynamicImage> {
     Ok(postprocess_image(ctx, DynamicImage::ImageRgba8(combined)))
 }
 
-fn is_url(s: &[u8]) -> bool {
+pub fn is_url(s: &[u8]) -> bool {
     s.starts_with(b"http://") || s.starts_with(b"https://") || s.starts_with(b"file://")
 }
 

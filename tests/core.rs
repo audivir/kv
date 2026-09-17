@@ -14,7 +14,8 @@ fn default_ctx() -> KvContext {
         page_indices: None,
         cache_mode: CacheMode::Disabled,
         background_color: None,
-        render_as_pdf: false,
+        render_as_external: false,
+        color_scheme: ColorScheme::Dark,
     }
 }
 
@@ -203,3 +204,16 @@ fn test_load_data_invalid_svg(#[case] data: &[u8], #[case] err_msg: Option<&str>
     assert!(result.is_err());
     assert_eq!(result.unwrap_err().to_string(), err_msg.unwrap());
 }
+
+const HTML_DATA: &[u8] = b"<html><body><h1>Test</h1></body></html>";
+
+#[test]
+fn test_load_data_html_renders_markdown_by_default() {
+    let ctx = default_ctx();
+    let result = load_data(&ctx, HTML_DATA, "html").unwrap();
+    assert!(matches!(result, LoadResult::Rendered(_)));
+}
+
+// Chrome-invoking counterparts (--external, and URLs always rendering as an image) live in
+// tests/render.rs, serialized behind CHROME_TEST_LOCK to avoid racing headless_chrome's
+// first-run binary download against the other Chrome tests there.

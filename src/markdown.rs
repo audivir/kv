@@ -3,7 +3,9 @@ use anyhow::{Context, Result};
 use pulldown_cmark::{
     Alignment, CodeBlockKind, CowStr, Event, HeadingLevel, LinkType, Options, Parser, Tag, TagEnd,
 };
-use pulldown_cmark_mdcat::resources::FileResourceHandler;
+use pulldown_cmark_mdcat::resources::{
+    DispatchingResourceHandler, FileResourceHandler, MimeData, ResourceUrlHandler, filter_schemes,
+};
 use pulldown_cmark_mdcat::terminal::TerminalSize;
 use pulldown_cmark_mdcat::terminal::capabilities::kitty::KittyGraphicsProtocol;
 use pulldown_cmark_mdcat::terminal::capabilities::{
@@ -11,14 +13,44 @@ use pulldown_cmark_mdcat::terminal::capabilities::{
 };
 use pulldown_cmark_mdcat::{Environment, Settings, Theme};
 use std::collections::HashMap;
+use std::io::Error;
 use std::path::{Path, PathBuf};
-use syntect::parsing::SyntaxSet;
 
 use crate::KvContext;
 
 /// Bytes read from a local `file:` resource, kept small enough that a malformed or malicious
 /// asset cannot exhaust memory while rendering.
 const RESOURCE_READ_LIMIT: u64 = 128 * 1024 * 1024;
+
+/// Fetcher for `http(s)` resources referenced from Markdown or HTML (badges, remote images), so
+/// they render inline like they would on GitHub instead of degrading to a plain link.
+struct HttpResourceHandler;
+
+impl ResourceUrlHandler for HttpResourceHandler {
+    fn read_resource(&self, url: &url::Url) -> std::io::Result<MimeData> {
+        let url = filter_schemes(&["http", "https"], url)?;
+        let mut response = ureq::get(url.as_str())
+            .call()
+            .map_err(Error::other)?;
+        let mime_type = response
+            .headers()
+            .get("content-type")
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<mime::Mime>().ok());
+        let data = response
+            .body_mut()
+            .read_to_vec()
+            .map_err(Error::other)?;
+        Ok(MimeData { mime_type, data })
+    }
+}
+
+fn resource_handler() -> DispatchingResourceHandler {
+    DispatchingResourceHandler::new(vec![
+        Box::new(FileResourceHandler::new(RESOURCE_READ_LIMIT)),
+        Box::new(HttpResourceHandler),
+    ])
+}
 
 fn terminal_capabilities() -> TerminalCapabilities {
     TerminalCapabilities {
@@ -97,22 +129,21 @@ fn select_pages<'e>(
 
 fn render_events<'e>(ctx: &KvContext, base_dir: &Path, events: Vec<Event<'e>>) -> Result<Vec<u8>> {
     let events = select_pages(events, ctx.page_indices.as_deref())?;
-    let syntax_set = SyntaxSet::load_defaults_newlines();
+    // languages `bat`'s bundled syntax set does not cover fall back to unhighlighted plain text.
+    let assets = bat::assets::HighlightingAssets::from_binary();
+    let syntax_set = assets.get_syntax_set().context("Failed to load syntax definitions")?;
     let settings = Settings {
         terminal_capabilities: terminal_capabilities(),
-        terminal_size: TerminalSize {
-            columns: u16::try_from(ctx.term_size.0 / 10)
-                .unwrap_or(u16::MAX)
-                .max(1),
-            ..TerminalSize::default()
-        },
-        syntax_set: &syntax_set,
+        // the image-fitting logic needs real pixel/cell dimensions to scale embedded images
+        // down to the terminal; `TerminalSize::detect` queries those from the real terminal.
+        terminal_size: TerminalSize::detect().unwrap_or_default(),
+        syntax_set,
         theme: Theme::default(),
-        syntax_theme: None,
+        syntax_theme: Some(assets.get_theme(ctx.color_scheme.theme_name()).clone()),
     };
     let environment =
         Environment::for_local_directory(&base_dir).context("Failed to resolve base directory")?;
-    let resource_handler = FileResourceHandler::new(RESOURCE_READ_LIMIT);
+    let resource_handler = resource_handler();
 
     let mut output = Vec::new();
     pulldown_cmark_mdcat::push_tty(
@@ -126,16 +157,42 @@ fn render_events<'e>(ctx: &KvContext, base_dir: &Path, events: Vec<Event<'e>>) -
     Ok(output)
 }
 
+const MARKDOWN_OPTIONS: Options =
+    Options::ENABLE_TABLES.union(Options::ENABLE_STRIKETHROUGH).union(Options::ENABLE_TASKLISTS);
+
 /// Renders Markdown to terminal-ready bytes, resolving relative image references against
 /// `base_dir`.
 pub fn render_markdown(ctx: &KvContext, data: &[u8], base_dir: &Path) -> Result<Vec<u8>> {
     let text = std::str::from_utf8(data).context("Markdown input is not valid UTF-8")?;
-    let events: Vec<Event> = Parser::new_ext(
-        text,
-        Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS,
-    )
-    .collect();
+    let events: Vec<Event> = Parser::new_ext(text, MARKDOWN_OPTIONS).collect();
+    let events = normalize_embedded_html(events)?;
     render_events(ctx, base_dir, events)
+}
+
+/// Converts a standalone HTML document to Markdown via `htmd` and renders it like
+/// [`render_markdown`], resolving relative image references against `base_dir`.
+pub fn render_html_markdown(ctx: &KvContext, data: &[u8], base_dir: &Path) -> Result<Vec<u8>> {
+    let html = std::str::from_utf8(data).context("HTML input is not valid UTF-8")?;
+    let markdown = htmd::convert(html).context("Failed to convert HTML to Markdown")?;
+    let events: Vec<Event> = Parser::new_ext(&markdown, MARKDOWN_OPTIONS).collect();
+    render_events(ctx, base_dir, events)
+}
+
+/// Normalizes raw HTML embedded in Markdown (badges, centered images, `<details>`, ...), which
+/// has no equivalent `pulldown_cmark::Event` and would otherwise print as literal source text.
+/// Renders the document to HTML the same way GitHub does (merging CommonMark with the embedded
+/// HTML), converts that back to plain Markdown via `htmd`, and reparses it, so e.g. `<img>` and
+/// `<a>` tags become real image and link events. Documents without embedded HTML keep their
+/// original events unchanged, so plain CommonMark is unaffected by the round trip.
+fn normalize_embedded_html(events: Vec<Event<'_>>) -> Result<Vec<Event<'static>>> {
+    if !events.iter().any(|event| matches!(event, Event::Html(_) | Event::InlineHtml(_))) {
+        return Ok(events.into_iter().map(Event::into_static).collect());
+    }
+
+    let mut html = String::new();
+    pulldown_cmark::html::push_html(&mut html, events.into_iter());
+    let markdown = htmd::convert(&html).context("Failed to normalize embedded HTML")?;
+    Ok(Parser::new_ext(&markdown, MARKDOWN_OPTIONS).map(Event::into_static).collect())
 }
 
 /// Converts an Office document to Markdown via `anydoc` and renders it like [`render_markdown`],
@@ -321,7 +378,8 @@ fn push_block(
     Ok(())
 }
 
-/// Table cells hold inline content directly (no `Paragraph` wrapper), unlike other blocks.
+/// Pushes one table row as `TableCell` events. Cells hold inline content directly (no
+/// `Paragraph` wrapper), unlike other blocks.
 fn push_table_row(
     row: &[CellSlot],
     events: &mut Vec<Event<'static>>,

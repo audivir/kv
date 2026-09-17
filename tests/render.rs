@@ -27,7 +27,8 @@ fn ctx_with(resize_mode: ResizeMode, term_size: (u32, u32), page_indices: Option
         page_indices,
         cache_mode: CacheMode::Disabled,
         background_color: None,
-        render_as_pdf: false,
+        render_as_external: false,
+        color_scheme: ColorScheme::Dark,
     }
 }
 
@@ -137,6 +138,32 @@ fn test_render_html_chrome_invalid(#[case] html_data: &[u8]) {
     let ctx = ctx_with(ResizeMode::Original, (100, 50), None);
     let result = render_html_chrome(&ctx, html_data);
     assert!(result.is_err(), "HTML generation should fail");
+}
+
+const HTML_DOC: &[u8] = b"<html><body><h1>Test</h1></body></html>";
+
+#[test]
+fn test_load_data_html_renders_image_with_external() {
+    let _guard = CHROME_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut ctx = ctx_with(ResizeMode::Original, (100, 50), None);
+    ctx.render_as_external = true;
+    let result = load_data(&ctx, HTML_DOC, "html").unwrap();
+    assert!(matches!(result, LoadResult::Image(_)));
+}
+
+#[test]
+fn test_load_data_url_content_always_renders_image() {
+    // a URL is always screenshotted live via Chrome, since it may be dynamic, regardless of
+    // --external.
+    let _guard = CHROME_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let ctx = ctx_with(ResizeMode::Original, (100, 50), None);
+    let url = b"https://upload.wikimedia.org/wikipedia/commons/b/b9/Solid_red.png";
+    let result = load_data(&ctx, url, "").unwrap();
+    assert!(matches!(result, LoadResult::Image(_)));
 }
 
 const WHITE: Rgba<u8> = Rgba([255, 255, 255, 255]);
@@ -258,4 +285,17 @@ fn test_render_office_markdown_page_selection() {
 
     let ctx_page2 = ctx_with(ResizeMode::Original, (800, 400), Some(vec![1]));
     assert!(render_office_markdown(&ctx_page2, XLSX_DATA, "xlsx").is_err());
+}
+
+#[test]
+fn test_render_html_markdown() {
+    let ctx = ctx_with(ResizeMode::Original, (800, 400), None);
+    let base_dir = std::path::Path::new("tests/fixtures").canonicalize().unwrap();
+    let html = br#"<h1>Title</h1><p>Some <strong>bold</strong> text.</p><img src="test.png" alt="a local image">"#;
+    let rendered = render_html_markdown(&ctx, html, &base_dir).unwrap();
+    let text = String::from_utf8(rendered).unwrap();
+    assert!(text.contains("Title"));
+    assert!(text.contains("bold"));
+    // the relative image reference resolves against `base_dir` and renders inline via Kitty.
+    assert!(text.contains(KITTY_IMAGE_PREFIX));
 }
