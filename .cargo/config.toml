@@ -2,3 +2,6 @@
 # populated by scripts/setup-libheif.sh
 PKG_CONFIG_PATH = { value = "vendor/libheif-static/lib/pkgconfig", relative = true }
 SYSTEM_DEPS_LIBHEIF_LINK = "static"
+# pkg-config requires this whenever host and target triples differ, e.g. compiling
+# for windows-gnullvm on an msvc host.
+PKG_CONFIG_ALLOW_CROSS = "1"
