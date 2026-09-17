@@ -48,8 +48,10 @@ jobs:
       - name: Install llvm-mingw (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          $release = Invoke-RestMethod -Uri "https://api.github.com/repos/mstorsjo/llvm-mingw/releases/latest"
+          $release = Invoke-RestMethod -Uri "https://api.github.com/repos/mstorsjo/llvm-mingw/releases/latest" -Headers @{ Authorization = "Bearer $env:GH_TOKEN" }
           $asset = $release.assets | Where-Object { $_.name -like "*ucrt-x86_64.zip" }
           Invoke-WebRequest -Uri $asset.browser_download_url -OutFile llvm-mingw.zip
           Expand-Archive -Path llvm-mingw.zip -DestinationPath "$env:RUNNER_TEMP\llvm-mingw"
