@@ -12,7 +12,7 @@ use pdfium_render::prelude::{PdfRenderConfig, Pdfium};
 
 use crate::{InputType, KvContext};
 use base64::{Engine as _, engine::general_purpose};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use headless_chrome::protocol::cdp::Page::CaptureScreenshotFormatOption;
 use headless_chrome::{Browser, LaunchOptions};
@@ -180,15 +180,82 @@ static PDFIUM: OnceLock<Pdfium> = OnceLock::new();
 // every use of `get_pdfium()`'s result, not just the one-time bind.
 static PDFIUM_LOCK: Mutex<()> = Mutex::new(());
 
+/// Name of the `pdfium-binaries` release asset for the current OS/architecture.
+fn pdfium_asset_name() -> Result<&'static str> {
+    Ok(match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("macos", "aarch64") => "pdfium-mac-arm64",
+        ("macos", "x86_64") => "pdfium-mac-x64",
+        ("linux", "aarch64") => "pdfium-linux-arm64",
+        ("linux", "x86_64") => "pdfium-linux-x64",
+        ("windows", "aarch64") => "pdfium-win-arm64",
+        ("windows", "x86_64") => "pdfium-win-x64",
+        (os, arch) => anyhow::bail!("No prebuilt pdfium library available for {os}/{arch}"),
+    })
+}
+
+/// Downloads a prebuilt `libpdfium` from `pdfium-binaries` into `data_dir`, for platforms where
+/// no local or system library is found. Mirrors how `headless_chrome` self-installs Chrome.
+///
+/// Extracts to a process-unique temporary path and renames it into `data_dir`, making the
+/// install atomic with respect to concurrent `kv` processes on the same machine.
+fn download_pdfium(data_dir: &Path) -> Result<()> {
+    let asset = pdfium_asset_name()?;
+    let url = format!(
+        "https://github.com/bblanchon/pdfium-binaries/releases/latest/download/{asset}.tgz"
+    );
+    let mut response = ureq::get(&url).call().context("Failed to download pdfium")?;
+    let bytes = response
+        .body_mut()
+        .read_to_vec()
+        .context("Failed to read pdfium download")?;
+
+    std::fs::create_dir_all(data_dir).context("Failed to create data directory")?;
+    let target_name = Pdfium::pdfium_platform_library_name();
+    let target_path = data_dir.join(&target_name);
+    let tmp_path = data_dir.join(format!("{}.{}.tmp", target_name.to_string_lossy(), std::process::id()));
+    let decoder = flate2::read::GzDecoder::new(Cursor::new(bytes));
+    let mut archive = tar::Archive::new(decoder);
+    for entry in archive.entries().context("Failed to read pdfium archive")? {
+        let mut entry = entry.context("Failed to read pdfium archive entry")?;
+        let path = entry
+            .path()
+            .context("Failed to read pdfium archive entry path")?;
+        if path.file_name() == Some(target_name.as_os_str()) {
+            entry
+                .unpack(&tmp_path)
+                .context("Failed to extract pdfium library")?;
+            // On Windows, renaming onto a destination another process currently has open
+            // (e.g. already loaded) fails; a pre-existing target_path is a successful install.
+            if let Err(err) = std::fs::rename(&tmp_path, &target_path) {
+                let _ = std::fs::remove_file(&tmp_path);
+                if !target_path.is_file() {
+                    return Err(err).context("Failed to install pdfium library");
+                }
+            }
+            return Ok(());
+        }
+    }
+    anyhow::bail!(
+        "Downloaded pdfium archive did not contain {}",
+        target_name.to_string_lossy()
+    )
+}
+
 fn get_pdfium() -> Result<&'static Pdfium> {
     if let Some(pdfium) = PDFIUM.get() {
         return Ok(pdfium);
     }
 
-    let bindings = Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("./"))
+    let data_dir = kv_project_dirs().data_dir;
+
+    let found = Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("./"))
         .or_else(|_| {
             Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("./pdfium/"))
         })
+        // a self-contained install (e.g. no admin rights for a system library directory) can
+        // place libpdfium in kv's own XDG data directory instead, next to the Office document
+        // cache.
+        .or_else(|_| Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path(&data_dir)))
         .or_else(|_| {
             Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path(
                 "/opt/homebrew/lib",
@@ -199,7 +266,16 @@ fn get_pdfium() -> Result<&'static Pdfium> {
                 "/usr/local/lib",
             ))
         })
-        .or_else(|_| Pdfium::bind_to_system_library())?;
+        .or_else(|_| Pdfium::bind_to_system_library());
+
+    let bindings = match found {
+        Ok(bindings) => bindings,
+        Err(_) => {
+            eprintln!("libpdfium not found; downloading a prebuilt copy...");
+            download_pdfium(&data_dir)?;
+            Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path(&data_dir))?
+        }
+    };
 
     Ok(PDFIUM.get_or_init(|| Pdfium::new(bindings)))
 }

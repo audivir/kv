@@ -1,0 +1,4 @@
+[env]
+# populated by scripts/setup-libheif.sh
+PKG_CONFIG_PATH = { value = "vendor/libheif-static/lib/pkgconfig", relative = true }
+SYSTEM_DEPS_LIBHEIF_LINK = "static"
