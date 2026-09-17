@@ -8,7 +8,8 @@ An image and document viewer for the Kitty Terminal Graphics Protocol.
 - wider SVG support using `resvg`,
 - PDF support using `pdfium`,
 - HTML support using `headless_chrome`,
-- Office support using `libreoffice` (and `pdfium` due to intermediate PDF representation, cached per default for performance),
+- Office documents (docx, xlsx, pptx, ...) rendered as Markdown by default using `anydoc`, or as an image via `libreoffice`/`pdfium` with `--pdf` (cached per default for performance),
+- Markdown rendering (headings, tables, lists, inline images, ...) using `pulldown-cmark-mdcat`, with images shown inline via the Kitty Graphics Protocol,
 - Text output using `bat`.
 
 ## Installation
@@ -17,8 +18,9 @@ An image and document viewer for the Kitty Terminal Graphics Protocol.
 
 - For PDF support, download `libpdfium.dylib` or `libpdfium.so` from [pdfium](https://github.com/bblanchon/pdfium-binaries/releases) and copy it in the same directory as `kv`, one of the system library paths, or add the directory containing `libpdfium` library to `DYLD_LIBRARY_PATH` on macOS or `LD_LIBRARY_PATH` on Linux.
 - For HTML support, `headless_chrome` automatically downloads a chrome binary on the first run.
-- For Office support, `soffice` (from `libreoffice`) and `libpdfium` are required.
-  > Caveats: Office files are cached per default for performance. Use `-n` to disable caching.
+- Office documents render as Markdown by default; no external tool is required. Images embedded in the source document (or referenced by a relative path next to a `.md` file) render inline via the Kitty Graphics Protocol.
+- For `--pdf` (Office rendered as an image via an intermediate PDF), `soffice` (from `libreoffice`) and `libpdfium` are required.
+  > Caveats: Office files are cached per default for performance. Use `-C`/`--no-cache` to disable caching. If `soffice` is not found on `PATH`, `--pdf` falls back to Markdown rendering with a warning.
 
 ### From Source
 
@@ -55,8 +57,17 @@ kv -P 1-3,34 pdf.pdf
 # store a screenshot of an external domain as a png file
 kv -o example.png https://example.org
 
-# view office documents
+# view an office document, rendered as markdown with inline images
 kv document.docx
+
+# render specific "pages" of an office document (sheets, slides, or heading-delimited sections)
+kv -P 1-2 workbook.xlsx
+
+# render an office document as an image instead, via an intermediate PDF
+kv --pdf document.docx
+
+# view a markdown file directly, with inline images
+kv README.md
 ```
 
 ### Options
@@ -74,12 +85,13 @@ kv document.docx
 | `-m`, `--mode` | Set transmission mode (png, zlib, raw). Default: png. |
 | `-o`, `--output` | Output to file as png, instead of kitty. |
 | `-x`, `--overwrite` | Overwrite existing output file. |
-| `-i`, `--input` | Set input type (auto, image, svg, pdf, html, office). Default: auto. |
-| `-P`, `--pages` | Select pages to render (e.g. "1-3,34" or empty for all). Default: 1. |
+| `-i`, `--input` | Set input type (auto, image, svg, pdf, html, office, markdown). Default: auto. |
+| `-P`, `--pages` | Select pages to render (e.g. "1-3,34" or empty for all). For Markdown-rendered Office documents, a "page" is a top-level heading-delimited section (sheet or slide). Default: 1. |
 | `-A`, `--all` | Select all pages. |
 | `-l`, `--language` | Set language for syntax highlighting (e.g. "toml"). |
 | `-N`, `--no-newline` | Do not add a newline after text data missing each input. (might mess up the terminal) |
 | `-C`, `--no-cache` | Do not cache office files. |
+| `--pdf` | Render Office documents as an image via an intermediate PDF, instead of the default Markdown rendering. Falls back to Markdown with a warning if `soffice` is unavailable. |
 | `-p`, `--printname` | Print the filename before image. |
 | `-t`, `--tty` | Force tty (ignore stdin check). |
 | `-R`, `--remove` | Remove all images from terminal. |

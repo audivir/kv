@@ -14,6 +14,7 @@ fn default_ctx() -> KvContext {
         page_indices: None,
         cache_mode: CacheMode::Disabled,
         background_color: None,
+        render_as_pdf: false,
     }
 }
 

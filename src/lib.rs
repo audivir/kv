@@ -11,6 +11,9 @@ pub use config::*;
 mod render;
 pub use render::*;
 
+mod markdown;
+pub use markdown::*;
+
 mod send;
 pub use send::*;
 
@@ -23,6 +26,9 @@ static PLUGINS: OnceLock<std::collections::HashMap<String, Plugin>> = OnceLock::
 pub enum LoadResult {
     Image(DynamicImage),
     Data(Vec<u8>),
+    /// Bytes already fully formatted for the terminal (ANSI styling, inline Kitty images),
+    /// written verbatim instead of passed through `bat`.
+    Rendered(Vec<u8>),
 }
 
 /// Defines how the image should be resized relative to the terminal or explicit dimensions.
@@ -66,6 +72,7 @@ pub enum InputType {
     Pdf,
     Html,
     Office,
+    Markdown,
 }
 
 #[derive(Debug, Clone)]
@@ -77,6 +84,9 @@ pub struct KvContext {
     pub page_indices: Option<Vec<u16>>,
     pub cache_mode: CacheMode,
     pub background_color: Option<Rgba<u8>>,
+    /// Render Office documents as an image via an intermediate PDF instead of converting them to
+    /// Markdown (the default).
+    pub render_as_pdf: bool,
 }
 
 /// Detects terminal size with fallbacks.
@@ -250,12 +260,35 @@ pub fn load_file(ctx: &KvContext, path: &Path) -> Result<LoadResult> {
     let mut data = Vec::new();
     file.read_to_end(&mut data)?;
 
+    if is_markdown(ctx, &extension) {
+        let absolute_path = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            std::env::current_dir()
+                .context("Failed to determine current directory")?
+                .join(path)
+        };
+        let base_dir = absolute_path
+            .parent()
+            .context("Markdown file has no parent directory")?;
+        return Ok(LoadResult::Rendered(render_markdown(ctx, &data, base_dir)?));
+    }
+
     load_data(ctx, &data, &extension)
+}
+
+fn is_markdown(ctx: &KvContext, extension: &str) -> bool {
+    ctx.input_type == InputType::Markdown || extension == "md" || extension == "markdown"
 }
 
 pub fn load_data(ctx: &KvContext, data: &[u8], extension: &str) -> Result<LoadResult> {
     if ctx.input_type == InputType::Text {
         return Ok(LoadResult::Data(data.to_vec()));
+    }
+
+    if is_markdown(ctx, extension) {
+        let base_dir = std::env::current_dir().context("Failed to determine current directory")?;
+        return Ok(LoadResult::Rendered(render_markdown(ctx, data, &base_dir)?));
     }
 
     let plugins = PLUGINS.get_or_init(load_plugins);
@@ -289,7 +322,17 @@ pub fn load_data(ctx: &KvContext, data: &[u8], extension: &str) -> Result<LoadRe
     if ctx.input_type == InputType::Office
         || ["doc", "docx", "xls", "xlsx", "ppt", "pptx"].contains(&extension)
     {
-        return Ok(LoadResult::Image(render_office(ctx, data, extension)?));
+        if ctx.render_as_pdf {
+            match render_office(ctx, data, extension)? {
+                Some(img) => return Ok(LoadResult::Image(img)),
+                None => eprintln!(
+                    "Warning: `soffice` not found on PATH; rendering as Markdown instead."
+                ),
+            }
+        }
+        return Ok(LoadResult::Rendered(render_office_markdown(
+            ctx, data, extension,
+        )?));
     }
 
     if is_html(ctx, extension, data)

@@ -11,6 +11,13 @@ const SVG_DATA: &[u8] = include_bytes!("fixtures/test.svg");
 const PDF_DATA: &[u8] = include_bytes!("fixtures/test.pdf");
 const HTML_DATA: &[u8] = include_bytes!("fixtures/test.html");
 const RANDOM_DATA: &[u8] = include_bytes!("fixtures/test.random");
+const DOCX_DATA: &[u8] = include_bytes!("fixtures/test.docx");
+const XLSX_DATA: &[u8] = include_bytes!("fixtures/test.xlsx");
+const DOCX_WITH_IMAGE_DATA: &[u8] = include_bytes!("fixtures/test_with_image.docx");
+const MARKDOWN_DATA: &[u8] = include_bytes!("fixtures/test.md");
+
+// Kitty graphics protocol escape sequences start with this prefix.
+const KITTY_IMAGE_PREFIX: &str = "\x1b_Ga=T";
 
 fn ctx_with(resize_mode: ResizeMode, term_size: (u32, u32), page_indices: Option<Vec<u16>>) -> KvContext {
     KvContext {
@@ -20,6 +27,7 @@ fn ctx_with(resize_mode: ResizeMode, term_size: (u32, u32), page_indices: Option
         page_indices,
         cache_mode: CacheMode::Disabled,
         background_color: None,
+        render_as_pdf: false,
     }
 }
 
@@ -156,4 +164,98 @@ fn test_add_background(
         pixel, expected_pixel,
         "Background color not applied correctly"
     );
+}
+
+#[test]
+fn test_render_office_markdown_docx() {
+    let ctx = ctx_with(ResizeMode::Original, (800, 400), None);
+    let rendered = render_office_markdown(&ctx, DOCX_DATA, "docx").unwrap();
+    let text = String::from_utf8(rendered).unwrap();
+    assert!(text.contains("Hello World"));
+    assert!(text.contains("This is a test document."));
+}
+
+#[test]
+fn test_render_office_markdown_xlsx() {
+    let ctx = ctx_with(ResizeMode::Original, (800, 400), None);
+    let rendered = render_office_markdown(&ctx, XLSX_DATA, "xlsx").unwrap();
+    let text = String::from_utf8(rendered).unwrap();
+    assert!(text.contains('a') && text.contains('b') && text.contains('c'));
+    assert!(text.contains('1') && text.contains('2') && text.contains('3'));
+}
+
+#[test]
+fn test_render_office_markdown_unsupported_extension() {
+    let ctx = ctx_with(ResizeMode::Original, (800, 400), None);
+    let result = render_office_markdown(&ctx, RANDOM_DATA, "random");
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_render_office_markdown_embeds_image() {
+    let ctx = ctx_with(ResizeMode::Original, (800, 400), None);
+    let rendered = render_office_markdown(&ctx, DOCX_WITH_IMAGE_DATA, "docx").unwrap();
+    let text = String::from_utf8(rendered).unwrap();
+    // an image embedded in the docx (not just a URL) still renders inline via Kitty, rather than
+    // degrading to alt text.
+    assert!(text.contains(KITTY_IMAGE_PREFIX));
+}
+
+#[test]
+fn test_render_markdown() {
+    let ctx = ctx_with(ResizeMode::Original, (800, 400), None);
+    let base_dir = std::path::Path::new("tests/fixtures")
+        .canonicalize()
+        .unwrap();
+    let base_dir = base_dir.as_path();
+    let rendered = render_markdown(&ctx, MARKDOWN_DATA, base_dir).unwrap();
+    let text = String::from_utf8(rendered).unwrap();
+    assert!(text.contains("Title"));
+    assert!(text.contains("bold"));
+    // the relative image reference resolves against `base_dir` and renders inline via Kitty.
+    assert!(text.contains(KITTY_IMAGE_PREFIX));
+}
+
+#[test]
+fn test_render_markdown_page_selection() {
+    let base_dir = std::path::Path::new("tests/fixtures")
+        .canonicalize()
+        .unwrap();
+    let md = b"# Page One\n\nfirst content\n\n# Page Two\n\nsecond content\n";
+
+    let ctx_all = ctx_with(ResizeMode::Original, (800, 400), None);
+    let all = String::from_utf8(render_markdown(&ctx_all, md, &base_dir).unwrap()).unwrap();
+    assert!(all.contains("Page One") && all.contains("second content"));
+
+    // top-level headings split the document into pages, 0-indexed by request order.
+    let ctx_page1 = ctx_with(ResizeMode::Original, (800, 400), Some(vec![0]));
+    let page1 = String::from_utf8(render_markdown(&ctx_page1, md, &base_dir).unwrap()).unwrap();
+    assert!(page1.contains("first content"));
+    assert!(!page1.contains("second content"));
+
+    let ctx_page2 = ctx_with(ResizeMode::Original, (800, 400), Some(vec![1]));
+    let page2 = String::from_utf8(render_markdown(&ctx_page2, md, &base_dir).unwrap()).unwrap();
+    assert!(!page2.contains("first content"));
+    assert!(page2.contains("second content"));
+}
+
+#[test]
+fn test_render_markdown_page_out_of_range() {
+    let base_dir = std::path::Path::new("tests/fixtures")
+        .canonicalize()
+        .unwrap();
+    let md = b"# Only Page\n\ncontent\n";
+    let ctx = ctx_with(ResizeMode::Original, (800, 400), Some(vec![5]));
+    let result = render_markdown(&ctx, md, &base_dir);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_render_office_markdown_page_selection() {
+    // a single-sheet workbook is a single page: page 1 succeeds, page 2 is out of range.
+    let ctx_page1 = ctx_with(ResizeMode::Original, (800, 400), Some(vec![0]));
+    assert!(render_office_markdown(&ctx_page1, XLSX_DATA, "xlsx").is_ok());
+
+    let ctx_page2 = ctx_with(ResizeMode::Original, (800, 400), Some(vec![1]));
+    assert!(render_office_markdown(&ctx_page2, XLSX_DATA, "xlsx").is_err());
 }

@@ -313,7 +313,24 @@ pub fn render_html_chrome(ctx: &KvContext, data: &[u8]) -> Result<DynamicImage> 
     render_image(ctx, &png_data)
 }
 
-pub fn render_office(ctx: &KvContext, data: &[u8], extension: &str) -> Result<DynamicImage> {
+/// Whether the `soffice` (LibreOffice) binary can be found on `PATH`.
+fn is_soffice_available() -> bool {
+    Command::new("soffice")
+        .arg("--version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok()
+}
+
+/// Converts an Office document to an image via an intermediate PDF (LibreOffice, then pdfium).
+/// Returns `Ok(None)` instead of erroring when `soffice` is unavailable and no cached PDF exists
+/// yet, so callers can fall back to another rendering path.
+pub fn render_office(
+    ctx: &KvContext,
+    data: &[u8],
+    extension: &str,
+) -> Result<Option<DynamicImage>> {
     let hash = Sha256::digest(data);
     let hash_str = hex::encode(hash);
 
@@ -334,8 +351,12 @@ pub fn render_office(ctx: &KvContext, data: &[u8], extension: &str) -> Result<Dy
         let cache_path = target_dir.join(format!("{}.pdf", hash_str));
         if cache_path.exists() {
             let cache_data = std::fs::read(&cache_path)?;
-            return render_pdf(ctx, &cache_data);
+            return Ok(Some(render_pdf(ctx, &cache_data)?));
         }
+    }
+
+    if !is_soffice_available() {
+        return Ok(None);
     }
 
     // create temp file with name hash.extension
@@ -358,7 +379,7 @@ pub fn render_office(ctx: &KvContext, data: &[u8], extension: &str) -> Result<Dy
 
     let pdf_path = target_dir.join(format!("{}.pdf", hash_str));
     let pdf_data = std::fs::read(&pdf_path)?;
-    render_pdf(ctx, &pdf_data)
+    Ok(Some(render_pdf(ctx, &pdf_data)?))
 }
 
 pub fn render_plugin(ctx: &KvContext, data: &[u8], plugin: &Plugin) -> Result<DynamicImage> {

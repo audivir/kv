@@ -149,7 +149,7 @@ pub fn open_config() -> Result<()> {
 # [custom-binary] # unique name
 # extensions = ["bin"] # leading dots will be ignored
 # magic-bytes = ["CA FE BA BE"] # spaces will be ignored
-# output = "image" # one of: image, pdf, office, svg, or text
+# output = "image" # one of: image, pdf, office, svg, markdown, or text
 # path = "my-converter" # correctly quoted path
 "#;
         std::fs::write(&path, template).context("Failed to create plugins.toml")?;

@@ -34,6 +34,7 @@ pub enum InputTypeOption {
     Pdf,
     Html,
     Office,
+    Markdown,
 }
 
 impl From<InputTypeOption> for InputType {
@@ -46,8 +47,19 @@ impl From<InputTypeOption> for InputType {
             InputTypeOption::Pdf => InputType::Pdf,
             InputTypeOption::Html => InputType::Html,
             InputTypeOption::Office => InputType::Office,
+            InputTypeOption::Markdown => InputType::Markdown,
         }
     }
+}
+
+/// Writes already-rendered terminal output (ANSI styling and inline Kitty images) verbatim.
+fn write_rendered(writer: &mut impl Write, bytes: &[u8], newline: bool) -> Result<()> {
+    writer.write_all(bytes)?;
+    if newline && !bytes.ends_with(b"\n") {
+        writeln!(writer)?;
+    }
+    writer.flush()?;
+    Ok(())
 }
 
 /// An image viewer for the Kitty Terminal Graphics Protocol.
@@ -149,6 +161,11 @@ pub struct Config {
     /// Do not cache office files
     #[arg(short = 'C', long)]
     pub no_cache: bool,
+
+    /// Render Office documents as an image via an intermediate PDF instead of converting them to
+    /// Markdown (the default). Falls back to Markdown with a warning if `soffice` is unavailable.
+    #[arg(long)]
+    pub pdf: bool,
 
     /// Print filename before each input
     #[arg(short = 'p', long)]
@@ -254,6 +271,7 @@ pub fn run(
         page_indices,
         cache_mode,
         background_color,
+        render_as_pdf: conf.pdf,
     };
 
     if use_stdin {
@@ -280,6 +298,9 @@ pub fn run(
                     conf.language.as_deref(),
                     !conf.no_newline,
                 )?;
+            }
+            Ok(LoadResult::Rendered(bytes)) => {
+                write_rendered(&mut writer, &bytes, !conf.no_newline)?;
             }
             Err(e) => {
                 writeln!(err_writer, "Error decoding stdin: {}", e)?;
@@ -308,6 +329,9 @@ pub fn run(
                         conf.language.as_deref(),
                         !conf.no_newline,
                     )?;
+                }
+                Ok(LoadResult::Rendered(bytes)) => {
+                    write_rendered(&mut writer, &bytes, !conf.no_newline)?;
                 }
                 Err(e) => {
                     writeln!(err_writer, "Error loading {}: {}", path.display(), e)?;
