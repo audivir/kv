@@ -33,4 +33,5 @@ jobs:
           docker run --rm -v "$PWD":/work -w /work rust:alpine sh -c '
             apk add --no-cache bash build-base pkgconf perl linux-headers curl chromium &&
             ./scripts/setup-libheif.sh &&
-            cargo test --workspace --all-features'
+            cargo test --workspace --all-features &&
+            test -z "$(ldd target/debug/kv | grep -v -e ld-musl -e libc.musl)"'

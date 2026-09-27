@@ -76,7 +76,8 @@ jobs:
           docker run --rm -v "$PWD":/work -w /work rust:alpine sh -c '
             apk add --no-cache bash build-base pkgconf perl linux-headers curl &&
             ./scripts/setup-libheif.sh &&
-            cargo build --release --target ${{ matrix.target }}'
+            cargo build --release --target ${{ matrix.target }} &&
+            test -z "$(ldd target/${{ matrix.target }}/release/kv | grep -v -e ld-musl -e libc.musl)"'
       - name: Package binary
         shell: bash
         run: |
