@@ -15,9 +15,9 @@ An image and document viewer for the Kitty Terminal Graphics Protocol.
 
 ### Prerequisites
 
-- For PDF support, download `libpdfium.dylib` or `libpdfium.so` from [pdfium](https://github.com/bblanchon/pdfium-binaries/releases) and copy it in the same directory as `kv`, one of the system library paths, or add the directory containing `libpdfium` library to `DYLD_LIBRARY_PATH` on macOS or `LD_LIBRARY_PATH` on Linux.
+- For PDF support, download `libpdfium.dylib` or `libpdfium.so` from [pdfium](https://github.com/bblanchon/pdfium-binaries/releases) and copy it in the same directory as `kv`, one of the system library paths, or add the directory containing `libpdfium` library to `DYLD_LIBRARY_PATH` on macOS or `LD_LIBRARY_PATH` on Linux. On musl-based Linux (e.g. Alpine), use the `pdfium-linux-musl-*` build.
 - Local HTML files and Office documents render as Markdown by default; no external tool is required. Images embedded in the source document (or referenced by a relative/HTTP(S) path) render inline via the Kitty Graphics Protocol.
-- URLs passed directly (e.g. `kv https://example.org`) always render as a live screenshot via Chrome, regardless of `--external`; `headless_chrome` automatically downloads a Chrome binary on the first run.
+- URLs passed directly (e.g. `kv https://example.org`) always render as a live screenshot via Chrome, regardless of `--external`; `headless_chrome` automatically downloads a Chrome binary on the first run. On musl-based Linux (e.g. Alpine), install Chromium from the package manager instead, since the downloaded Chrome requires glibc.
 - For `--external` (Office/HTML rendered as an image instead of Markdown), `soffice` (from `libreoffice`), `libpdfium`, and Chrome are required, depending on the input.
   > Caveats: Office files are cached per default for performance. Use `-C`/`--no-cache` to disable caching. If `soffice` is not found on `PATH`, `--external` falls back to Markdown rendering with a warning (Office documents only, not HTML).
 

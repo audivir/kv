@@ -185,6 +185,8 @@ fn pdfium_asset_name() -> Result<&'static str> {
     Ok(match (std::env::consts::OS, std::env::consts::ARCH) {
         ("macos", "aarch64") => "pdfium-mac-arm64",
         ("macos", "x86_64") => "pdfium-mac-x64",
+        ("linux", "aarch64") if cfg!(target_env = "musl") => "pdfium-linux-musl-arm64",
+        ("linux", "x86_64") if cfg!(target_env = "musl") => "pdfium-linux-musl-x64",
         ("linux", "aarch64") => "pdfium-linux-arm64",
         ("linux", "x86_64") => "pdfium-linux-x64",
         ("windows", "aarch64") => "pdfium-win-arm64",
@@ -373,7 +375,11 @@ pub fn render_html_chrome(ctx: &KvContext, data: &[u8]) -> Result<DynamicImage> 
     std::fs::create_dir_all(&user_data_dir)?;
     let browser = Browser::new(LaunchOptions {
         headless: true,
-        path: None,
+        path: if cfg!(target_env = "musl") {
+            headless_chrome::browser::default_executable().ok()
+        } else {
+            None
+        },
         user_data_dir: Some(user_data_dir),
         // Chrome's sandbox setup can hang indefinitely in restricted environments
         // (containers, some CI runners); disabling it is standard practice for

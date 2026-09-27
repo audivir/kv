@@ -6,10 +6,17 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 vendor_dir="$script_dir/../vendor/libheif-static"
 
+libc=""
+if [ "$(uname -s)" = "Linux" ]; then
+  case "$(ldd --version 2>&1 || true)" in
+    *musl*) libc="musl-" ;;
+  esac
+fi
+
 case "$(uname -s)-$(uname -m)" in
   Darwin-arm64) asset="macos-arm64" ;;
-  Linux-x86_64) asset="linux-amd64" ;;
-  Linux-aarch64) asset="linux-arm64" ;;
+  Linux-x86_64) asset="linux-${libc}amd64" ;;
+  Linux-aarch64) asset="linux-${libc}arm64" ;;
   MINGW*-x86_64 | MSYS*-x86_64 | CYGWIN*-x86_64) asset="windows-amd64" ;;
   MINGW*-aarch64 | MSYS*-aarch64 | CYGWIN*-aarch64) asset="windows-arm64" ;;
   *)

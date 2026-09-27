@@ -23,3 +23,14 @@ jobs:
       - name: Install static libheif
         run: ./scripts/setup-libheif.sh
       - run: cargo test --workspace --all-features
+  musl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - name: Test in Alpine (musl)
+        run: |
+          docker run --rm -v "$PWD":/work -w /work rust:alpine sh -c '
+            apk add --no-cache bash build-base pkgconf perl linux-headers curl chromium &&
+            ./scripts/setup-libheif.sh &&
+            cargo test --workspace --all-features'
