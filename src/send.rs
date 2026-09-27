@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
-use base64::{engine::general_purpose, Engine as _};
+use base64::{Engine as _, engine::general_purpose};
 use bat::{Input, PrettyPrinter};
-use flate2::write::ZlibEncoder;
 use flate2::Compression;
+use flate2::write::ZlibEncoder;
 use image::codecs::png::PngEncoder;
 use image::{DynamicImage, GenericImageView, ImageEncoder};
 use std::io::{Cursor, Write};

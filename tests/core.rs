@@ -111,7 +111,11 @@ fn test_load_file(#[case] path: PathBuf, #[case] input_type: InputType) {
 }
 
 #[rstest]
-#[case(PathBuf::from("nonexistent"), InputType::Auto, "Failed to open file: nonexistent")]
+#[case(
+    PathBuf::from("nonexistent"),
+    InputType::Auto,
+    "Failed to open file: nonexistent"
+)]
 #[case(
     PathBuf::from("tests/fixtures/test.random"),
     InputType::Auto,

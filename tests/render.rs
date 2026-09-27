@@ -19,7 +19,11 @@ const MARKDOWN_DATA: &[u8] = include_bytes!("fixtures/test.md");
 // Kitty graphics protocol escape sequences start with this prefix.
 const KITTY_IMAGE_PREFIX: &str = "\x1b_Ga=T";
 
-fn ctx_with(resize_mode: ResizeMode, term_size: (u32, u32), page_indices: Option<Vec<u16>>) -> KvContext {
+fn ctx_with(
+    resize_mode: ResizeMode,
+    term_size: (u32, u32),
+    page_indices: Option<Vec<u16>>,
+) -> KvContext {
     KvContext {
         input_type: InputType::Auto,
         resize_mode,
@@ -290,7 +294,9 @@ fn test_render_office_markdown_page_selection() {
 #[test]
 fn test_render_html_markdown() {
     let ctx = ctx_with(ResizeMode::Original, (800, 400), None);
-    let base_dir = std::path::Path::new("tests/fixtures").canonicalize().unwrap();
+    let base_dir = std::path::Path::new("tests/fixtures")
+        .canonicalize()
+        .unwrap();
     let html = br#"<h1>Title</h1><p>Some <strong>bold</strong> text.</p><img src="test.png" alt="a local image">"#;
     let rendered = render_html_markdown(&ctx, html, &base_dir).unwrap();
     let text = String::from_utf8(rendered).unwrap();
@@ -298,4 +304,41 @@ fn test_render_html_markdown() {
     assert!(text.contains("bold"));
     // the relative image reference resolves against `base_dir` and renders inline via Kitty.
     assert!(text.contains(KITTY_IMAGE_PREFIX));
+}
+
+#[test]
+fn test_render_html_markdown_skips_head() {
+    let ctx = ctx_with(ResizeMode::Original, (800, 400), Some(vec![0]));
+    let base_dir = std::path::Path::new("tests/fixtures")
+        .canonicalize()
+        .unwrap();
+    let html = br#"<!doctype html><html><head><title>Page title</title><style>body{color:red}</style><script>var x = 1;</script></head><body><h1>Heading</h1><p>Body text.</p></body></html>"#;
+    let rendered = render_html_markdown(&ctx, html, &base_dir).unwrap();
+    let text = String::from_utf8(rendered).unwrap();
+    assert!(text.contains("Heading"));
+    assert!(text.contains("Body text."));
+    assert!(!text.contains("Page title"));
+    assert!(!text.contains("color:red"));
+    assert!(!text.contains("var x"));
+}
+
+#[rstest]
+#[case(true)]
+#[case(false)]
+fn test_render_html_without_chrome(#[case] as_url: bool) {
+    let ctx = ctx_with(ResizeMode::Original, (800, 400), None);
+    let fixture = std::path::Path::new("tests/fixtures/test.html")
+        .canonicalize()
+        .unwrap();
+    let base_dir = fixture.parent().unwrap();
+    let data = if as_url {
+        format!("file://{}", fixture.display()).into_bytes()
+    } else {
+        HTML_DATA.to_vec()
+    };
+    let result = render_html_without_chrome(&ctx, &data, base_dir).unwrap();
+    match result {
+        LoadResult::Rendered(bytes) => assert!(String::from_utf8(bytes).unwrap().contains("Test")),
+        other => panic!("expected Markdown output, got {other:?}"),
+    }
 }

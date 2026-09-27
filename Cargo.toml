@@ -1,6 +1,6 @@
 [package]
 name = "kv"
-version = "0.3.4"
+version = "0.3.5"
 edition = "2024"
 description = "An image viewer for the Kitty Terminal Graphics Protocol"
 
@@ -36,7 +36,9 @@ tiny-skia = { version = "0.12" }
 pdfium-render = { version = "0.9" }
 tar = "0.4"
 # html
-headless_chrome = { version = "1.0", features = ["fetch"] }
+headless_chrome = { version = "1.0" }
+zip = { version = "8", default-features = false, features = ["deflate"] }
+serde_json = "1"
 # office
 sha2 = { version = "0.11.0" }
 hex = { version = "0.4" }

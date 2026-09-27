@@ -269,8 +269,7 @@ pub fn load_file(ctx: &KvContext, path: &Path) -> Result<LoadResult> {
         // file to open; always screenshot it live via Chrome, regardless of --external.
         let path_lossy = path.to_string_lossy();
         if is_url(path_lossy.as_bytes()) {
-            let img = render_html_chrome(ctx, path_lossy.as_bytes())?;
-            return Ok(LoadResult::Image(img));
+            return render_html_live(ctx, path_lossy.as_bytes(), &std::env::current_dir()?);
         }
     }
 
@@ -281,19 +280,83 @@ pub fn load_file(ctx: &KvContext, path: &Path) -> Result<LoadResult> {
 
     if is_markdown(ctx, &extension) {
         let base_dir = base_dir_of(path)?;
-        return Ok(LoadResult::Rendered(render_markdown(ctx, &data, &base_dir)?));
+        return Ok(LoadResult::Rendered(render_markdown(
+            ctx, &data, &base_dir,
+        )?));
     }
 
-    if is_html(ctx, &extension, &data) || data.starts_with(b"<html") || data.starts_with(b"<!DOCTYPE html")
+    if is_html(ctx, &extension, &data)
+        || data.starts_with(b"<html")
+        || data.starts_with(b"<!DOCTYPE html")
     {
-        if render_html_as_image(ctx, &data) {
-            return Ok(LoadResult::Image(render_html_chrome(ctx, &data)?));
-        }
         let base_dir = base_dir_of(path)?;
-        return Ok(LoadResult::Rendered(render_html_markdown(ctx, &data, &base_dir)?));
+        if render_html_as_image(ctx, &data) {
+            return render_html_live(ctx, &data, &base_dir);
+        }
+        return Ok(LoadResult::Rendered(render_html_markdown(
+            ctx, &data, &base_dir,
+        )?));
     }
 
     load_data(ctx, &data, &extension)
+}
+
+fn render_html_live(ctx: &KvContext, data: &[u8], base_dir: &Path) -> Result<LoadResult> {
+    match find_chrome() {
+        Ok(executable) => Ok(LoadResult::Image(render_html_chrome_with(
+            ctx, data, executable,
+        )?)),
+        Err(err) => {
+            eprintln!("Warning: Chrome is unavailable ({err:#}); rendering without it instead.");
+            render_html_without_chrome(ctx, data, base_dir)
+        }
+    }
+}
+
+pub fn render_html_without_chrome(ctx: &KvContext, data: &[u8], base_dir: &Path) -> Result<LoadResult> {
+    let text = String::from_utf8_lossy(data);
+    let text = text.trim();
+    if !is_url(text.as_bytes()) {
+        return Ok(LoadResult::Rendered(render_html_markdown(ctx, data, base_dir)?));
+    }
+    let url = url::Url::parse(text).context("Invalid URL")?;
+    let extension = Path::new(url.path())
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    let (body, is_html_type) = if url.scheme() == "file" {
+        let path = url
+            .to_file_path()
+            .map_err(|_| anyhow::anyhow!("Invalid file URL: {url}"))?;
+        (std::fs::read(&path).with_context(|| format!("Failed to read {}", path.display()))?, false)
+    } else {
+        let mut response = ureq::get(url.as_str())
+            .call()
+            .with_context(|| format!("Failed to fetch {url}"))?;
+        let is_html_type = response
+            .headers()
+            .get("content-type")
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| value.contains("html"));
+        let body = response
+            .body_mut()
+            .with_config()
+            .limit(128 * 1024 * 1024)
+            .read_to_vec()
+            .with_context(|| format!("Failed to read {url}"))?;
+        (body, is_html_type)
+    };
+    let head = String::from_utf8_lossy(&body[..body.len().min(512)]).to_lowercase();
+    let looks_like_html = is_html_type
+        || extension == "html"
+        || extension == "htm"
+        || head.trim_start().starts_with("<!doctype html")
+        || head.trim_start().starts_with("<html");
+    if looks_like_html {
+        return Ok(LoadResult::Rendered(render_html_markdown_from_url(ctx, &body, &url)?));
+    }
+    load_data(ctx, &body, &extension)
 }
 
 /// Resolves a file path to its absolute parent directory, for resolving relative resource
@@ -380,11 +443,13 @@ pub fn load_data(ctx: &KvContext, data: &[u8], extension: &str) -> Result<LoadRe
         || data.starts_with(b"<html")
         || data.starts_with(b"<!DOCTYPE html")
     {
-        if render_html_as_image(ctx, data) {
-            return Ok(LoadResult::Image(render_html_chrome(ctx, data)?));
-        }
         let base_dir = std::env::current_dir().context("Failed to determine current directory")?;
-        return Ok(LoadResult::Rendered(render_html_markdown(ctx, data, &base_dir)?));
+        if render_html_as_image(ctx, data) {
+            return render_html_live(ctx, data, &base_dir);
+        }
+        return Ok(LoadResult::Rendered(render_html_markdown(
+            ctx, data, &base_dir,
+        )?));
     }
 
     // fallback for InputType::Auto

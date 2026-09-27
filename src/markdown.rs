@@ -29,18 +29,13 @@ struct HttpResourceHandler;
 impl ResourceUrlHandler for HttpResourceHandler {
     fn read_resource(&self, url: &url::Url) -> std::io::Result<MimeData> {
         let url = filter_schemes(&["http", "https"], url)?;
-        let mut response = ureq::get(url.as_str())
-            .call()
-            .map_err(Error::other)?;
+        let mut response = ureq::get(url.as_str()).call().map_err(Error::other)?;
         let mime_type = response
             .headers()
             .get("content-type")
             .and_then(|value| value.to_str().ok())
             .and_then(|value| value.parse::<mime::Mime>().ok());
-        let data = response
-            .body_mut()
-            .read_to_vec()
-            .map_err(Error::other)?;
+        let data = response.body_mut().read_to_vec().map_err(Error::other)?;
         Ok(MimeData { mime_type, data })
     }
 }
@@ -127,11 +122,17 @@ fn select_pages<'e>(
         .collect())
 }
 
-fn render_events<'e>(ctx: &KvContext, base_dir: &Path, events: Vec<Event<'e>>) -> Result<Vec<u8>> {
+fn render_events<'e>(
+    ctx: &KvContext,
+    environment: &Environment,
+    events: Vec<Event<'e>>,
+) -> Result<Vec<u8>> {
     let events = select_pages(events, ctx.page_indices.as_deref())?;
     // languages `bat`'s bundled syntax set does not cover fall back to unhighlighted plain text.
     let assets = bat::assets::HighlightingAssets::from_binary();
-    let syntax_set = assets.get_syntax_set().context("Failed to load syntax definitions")?;
+    let syntax_set = assets
+        .get_syntax_set()
+        .context("Failed to load syntax definitions")?;
     let settings = Settings {
         terminal_capabilities: terminal_capabilities(),
         // the image-fitting logic needs real pixel/cell dimensions to scale embedded images
@@ -141,14 +142,12 @@ fn render_events<'e>(ctx: &KvContext, base_dir: &Path, events: Vec<Event<'e>>) -
         theme: Theme::default(),
         syntax_theme: Some(assets.get_theme(ctx.color_scheme.theme_name()).clone()),
     };
-    let environment =
-        Environment::for_local_directory(&base_dir).context("Failed to resolve base directory")?;
     let resource_handler = resource_handler();
 
     let mut output = Vec::new();
     pulldown_cmark_mdcat::push_tty(
         &settings,
-        &environment,
+        environment,
         &resource_handler,
         &mut output,
         events.into_iter(),
@@ -157,8 +156,20 @@ fn render_events<'e>(ctx: &KvContext, base_dir: &Path, events: Vec<Event<'e>>) -
     Ok(output)
 }
 
-const MARKDOWN_OPTIONS: Options =
-    Options::ENABLE_TABLES.union(Options::ENABLE_STRIKETHROUGH).union(Options::ENABLE_TASKLISTS);
+fn html_to_markdown(html: &str) -> std::io::Result<String> {
+    htmd::HtmlToMarkdown::builder()
+        .skip_tags(vec!["head", "script", "style", "noscript", "template"])
+        .build()
+        .convert(html)
+}
+
+fn local_environment(base_dir: &Path) -> Result<Environment> {
+    Environment::for_local_directory(&base_dir).context("Failed to resolve base directory")
+}
+
+const MARKDOWN_OPTIONS: Options = Options::ENABLE_TABLES
+    .union(Options::ENABLE_STRIKETHROUGH)
+    .union(Options::ENABLE_TASKLISTS);
 
 /// Renders Markdown to terminal-ready bytes, resolving relative image references against
 /// `base_dir`.
@@ -166,16 +177,29 @@ pub fn render_markdown(ctx: &KvContext, data: &[u8], base_dir: &Path) -> Result<
     let text = std::str::from_utf8(data).context("Markdown input is not valid UTF-8")?;
     let events: Vec<Event> = Parser::new_ext(text, MARKDOWN_OPTIONS).collect();
     let events = normalize_embedded_html(events)?;
-    render_events(ctx, base_dir, events)
+    render_events(ctx, &local_environment(base_dir)?, events)
 }
 
 /// Converts a standalone HTML document to Markdown via `htmd` and renders it like
 /// [`render_markdown`], resolving relative image references against `base_dir`.
 pub fn render_html_markdown(ctx: &KvContext, data: &[u8], base_dir: &Path) -> Result<Vec<u8>> {
     let html = std::str::from_utf8(data).context("HTML input is not valid UTF-8")?;
-    let markdown = htmd::convert(html).context("Failed to convert HTML to Markdown")?;
+    let markdown = html_to_markdown(html).context("Failed to convert HTML to Markdown")?;
     let events: Vec<Event> = Parser::new_ext(&markdown, MARKDOWN_OPTIONS).collect();
-    render_events(ctx, base_dir, events)
+    render_events(ctx, &local_environment(base_dir)?, events)
+}
+
+pub fn render_html_markdown_from_url(
+    ctx: &KvContext,
+    data: &[u8],
+    base_url: &url::Url,
+) -> Result<Vec<u8>> {
+    let html = String::from_utf8_lossy(data);
+    let markdown = html_to_markdown(&html).context("Failed to convert HTML to Markdown")?;
+    let events: Vec<Event> = Parser::new_ext(&markdown, MARKDOWN_OPTIONS).collect();
+    let environment =
+        Environment::for_localhost(base_url.clone()).context("Failed to resolve base URL")?;
+    render_events(ctx, &environment, events)
 }
 
 /// Normalizes raw HTML embedded in Markdown (badges, centered images, `<details>`, ...), which
@@ -185,14 +209,19 @@ pub fn render_html_markdown(ctx: &KvContext, data: &[u8], base_dir: &Path) -> Re
 /// `<a>` tags become real image and link events. Documents without embedded HTML keep their
 /// original events unchanged, so plain CommonMark is unaffected by the round trip.
 fn normalize_embedded_html(events: Vec<Event<'_>>) -> Result<Vec<Event<'static>>> {
-    if !events.iter().any(|event| matches!(event, Event::Html(_) | Event::InlineHtml(_))) {
+    if !events
+        .iter()
+        .any(|event| matches!(event, Event::Html(_) | Event::InlineHtml(_)))
+    {
         return Ok(events.into_iter().map(Event::into_static).collect());
     }
 
     let mut html = String::new();
     pulldown_cmark::html::push_html(&mut html, events.into_iter());
-    let markdown = htmd::convert(&html).context("Failed to normalize embedded HTML")?;
-    Ok(Parser::new_ext(&markdown, MARKDOWN_OPTIONS).map(Event::into_static).collect())
+    let markdown = html_to_markdown(&html).context("Failed to normalize embedded HTML")?;
+    Ok(Parser::new_ext(&markdown, MARKDOWN_OPTIONS)
+        .map(Event::into_static)
+        .collect())
 }
 
 /// Converts an Office document to Markdown via `anydoc` and renders it like [`render_markdown`],
@@ -205,7 +234,7 @@ pub fn render_office_markdown(ctx: &KvContext, data: &[u8], extension: &str) -> 
 
     let asset_dir = tempfile::tempdir().context("Failed to create temporary asset directory")?;
     let events = document_to_events(&document, asset_dir.path())?;
-    render_events(ctx, asset_dir.path(), events)
+    render_events(ctx, &local_environment(asset_dir.path())?, events)
 }
 
 /// Cache of embedded [`Document`] assets, written to disk on first reference so the terminal

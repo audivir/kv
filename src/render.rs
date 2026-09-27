@@ -69,8 +69,11 @@ pub fn render_image(ctx: &KvContext, data: &[u8]) -> Result<DynamicImage> {
 }
 
 fn has_face(db: &usvg::fontdb::Database, name: &str) -> bool {
-    db.faces()
-        .any(|face| face.families.iter().any(|(n, _)| n.eq_ignore_ascii_case(name)))
+    db.faces().any(|face| {
+        face.families
+            .iter()
+            .any(|(n, _)| n.eq_ignore_ascii_case(name))
+    })
 }
 
 // the built-in monospace default of fontdb ("Courier New") rarely exists outside Windows.
@@ -95,8 +98,14 @@ fn resolve_monospace_family(db: &usvg::fontdb::Database) -> String {
 const NAMED_FONT_FALLBACKS: &[(&str, &[&str])] = &[
     ("Arial", &["Liberation Sans", "Arimo", "DejaVu Sans"]),
     ("Helvetica", &["Liberation Sans", "Arimo", "DejaVu Sans"]),
-    ("Times New Roman", &["Liberation Serif", "Tinos", "DejaVu Serif"]),
-    ("Courier New", &["Liberation Mono", "Cousine", "DejaVu Sans Mono"]),
+    (
+        "Times New Roman",
+        &["Liberation Serif", "Tinos", "DejaVu Serif"],
+    ),
+    (
+        "Courier New",
+        &["Liberation Mono", "Cousine", "DejaVu Sans Mono"],
+    ),
 ];
 
 fn alias_missing_named_fonts(db: &mut usvg::fontdb::Database) {
@@ -124,7 +133,10 @@ fn alias_missing_named_fonts(db: &mut usvg::fontdb::Database) {
             face.id = usvg::fontdb::ID::dummy();
             face.families.insert(
                 0,
-                ((*missing).to_string(), usvg::fontdb::Language::English_UnitedStates),
+                (
+                    (*missing).to_string(),
+                    usvg::fontdb::Language::English_UnitedStates,
+                ),
             );
             db.push_face_info(face);
         }
@@ -205,7 +217,9 @@ fn download_pdfium(data_dir: &Path) -> Result<()> {
     let url = format!(
         "https://github.com/bblanchon/pdfium-binaries/releases/latest/download/{asset}.tgz"
     );
-    let mut response = ureq::get(&url).call().context("Failed to download pdfium")?;
+    let mut response = ureq::get(&url)
+        .call()
+        .context("Failed to download pdfium")?;
     let bytes = response
         .body_mut()
         .read_to_vec()
@@ -214,7 +228,11 @@ fn download_pdfium(data_dir: &Path) -> Result<()> {
     std::fs::create_dir_all(data_dir).context("Failed to create data directory")?;
     let target_name = Pdfium::pdfium_platform_library_name();
     let target_path = data_dir.join(&target_name);
-    let tmp_path = data_dir.join(format!("{}.{}.tmp", target_name.to_string_lossy(), std::process::id()));
+    let tmp_path = data_dir.join(format!(
+        "{}.{}.tmp",
+        target_name.to_string_lossy(),
+        std::process::id()
+    ));
     let decoder = flate2::read::GzDecoder::new(Cursor::new(bytes));
     let mut archive = tar::Archive::new(decoder);
     for entry in archive.entries().context("Failed to read pdfium archive")? {
@@ -257,7 +275,9 @@ fn get_pdfium() -> Result<&'static Pdfium> {
         // a self-contained install (e.g. no admin rights for a system library directory) can
         // place libpdfium in kv's own XDG data directory instead, next to the Office document
         // cache.
-        .or_else(|_| Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path(&data_dir)))
+        .or_else(|_| {
+            Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path(&data_dir))
+        })
         .or_else(|_| {
             Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path(
                 "/opt/homebrew/lib",
@@ -354,7 +374,181 @@ pub fn is_html(ctx: &KvContext, extension: &str, s: &[u8]) -> bool {
     ctx.input_type == InputType::Html || extension == "html" || extension == "htm" || is_url(s)
 }
 
+const HEADLESS_SHELL_VERSIONS_URL: &str = "https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json";
+
+#[derive(serde::Deserialize)]
+struct KnownGoodVersions {
+    channels: std::collections::HashMap<String, ChromeChannel>,
+}
+
+#[derive(serde::Deserialize)]
+struct ChromeChannel {
+    downloads: std::collections::HashMap<String, Vec<ChromeDownload>>,
+}
+
+#[derive(serde::Deserialize)]
+struct ChromeDownload {
+    platform: String,
+    url: String,
+}
+
+fn headless_shell_platform() -> Result<&'static str> {
+    Ok(match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("linux", "x86_64") => "linux64",
+        ("linux", "aarch64") => "linux-arm64",
+        ("macos", "aarch64") => "mac-arm64",
+        ("macos", "x86_64") => "mac-x64",
+        ("windows", "x86_64") => "win64",
+        ("windows", "x86") => "win32",
+        (os, arch) => anyhow::bail!("No prebuilt chrome-headless-shell available for {os}/{arch}"),
+    })
+}
+
+fn headless_shell_executable(data_dir: &Path, platform: &str) -> PathBuf {
+    let exe_name = if cfg!(windows) {
+        "chrome-headless-shell.exe"
+    } else {
+        "chrome-headless-shell"
+    };
+    data_dir
+        .join("chrome-headless-shell")
+        .join(format!("chrome-headless-shell-{platform}"))
+        .join(exe_name)
+}
+
+fn download_headless_shell(data_dir: &Path, platform: &str) -> Result<()> {
+    let versions: KnownGoodVersions = serde_json::from_str(
+        &ureq::get(HEADLESS_SHELL_VERSIONS_URL)
+            .call()
+            .context("Failed to fetch Chrome for Testing versions")?
+            .body_mut()
+            .read_to_string()
+            .context("Failed to read Chrome for Testing versions")?,
+    )
+    .context("Failed to parse Chrome for Testing versions")?;
+    let url = versions
+        .channels
+        .get("Stable")
+        .and_then(|channel| channel.downloads.get("chrome-headless-shell"))
+        .and_then(|downloads| downloads.iter().find(|d| d.platform == platform))
+        .map(|download| download.url.clone())
+        .ok_or_else(|| anyhow::anyhow!("No chrome-headless-shell download for {platform}"))?;
+
+    std::fs::create_dir_all(data_dir).context("Failed to create data directory")?;
+    let mut archive_file =
+        tempfile::tempfile_in(data_dir).context("Failed to create temporary file")?;
+    let mut response = ureq::get(&url)
+        .call()
+        .context("Failed to download chrome-headless-shell")?;
+    std::io::copy(
+        &mut response.body_mut().with_config().limit(u64::MAX).reader(),
+        &mut archive_file,
+    )
+    .context("Failed to download chrome-headless-shell")?;
+
+    let staging = tempfile::tempdir_in(data_dir).context("Failed to create temporary directory")?;
+    let mut archive = zip::ZipArchive::new(archive_file)
+        .context("Failed to read chrome-headless-shell archive")?;
+    for i in 0..archive.len() {
+        let mut entry = archive
+            .by_index(i)
+            .context("Failed to read chrome-headless-shell archive entry")?;
+        let Some(relative_path) = entry.enclosed_name() else {
+            continue;
+        };
+        if relative_path
+            .components()
+            .any(|c| c.as_os_str() == "locales")
+        {
+            continue;
+        }
+        let out_path = staging.path().join(&relative_path);
+        if entry.is_dir() {
+            std::fs::create_dir_all(&out_path)?;
+            continue;
+        }
+        if let Some(parent) = out_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let mut out_file = std::fs::File::create(&out_path)
+            .with_context(|| format!("Failed to create {}", out_path.display()))?;
+        std::io::copy(&mut entry, &mut out_file)
+            .context("Failed to extract chrome-headless-shell")?;
+        #[cfg(unix)]
+        if let Some(mode) = entry.unix_mode() {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&out_path, std::fs::Permissions::from_mode(mode))?;
+        }
+    }
+
+    let install_dir = data_dir.join("chrome-headless-shell");
+    if let Err(err) = std::fs::rename(staging.path(), &install_dir)
+        && !headless_shell_executable(data_dir, platform).is_file()
+    {
+        return Err(err).context("Failed to install chrome-headless-shell");
+    }
+    Ok(())
+}
+
+fn chrome_executable() -> Result<PathBuf> {
+    if let Some(path) = std::env::var_os("CHROME").map(PathBuf::from)
+        && path.is_file()
+    {
+        return Ok(path);
+    }
+    if cfg!(target_env = "musl") {
+        return headless_chrome::browser::default_executable().map_err(|_| {
+            anyhow::anyhow!(
+                "No Chromium found. There is no prebuilt headless Chrome for musl; install Chromium \
+                 (e.g. `apk add chromium`) or set CHROME to a Chromium executable"
+            )
+        });
+    }
+    let platform = headless_shell_platform()?;
+    let data_dir = kv_project_dirs().data_dir;
+    let executable = headless_shell_executable(&data_dir, platform);
+    if !executable.is_file() {
+        eprintln!("Downloading chrome-headless-shell...");
+        download_headless_shell(&data_dir, platform)?;
+    }
+    Ok(executable)
+}
+
+fn check_chrome_starts(executable: &Path) -> Result<()> {
+    if cfg!(windows) {
+        return Ok(());
+    }
+    let output = Command::new(executable)
+        .arg("--version")
+        .stdin(Stdio::null())
+        .output()
+        .with_context(|| format!("Failed to start {}", executable.display()))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let reason = match stderr.trim() {
+            "" => output.status.to_string(),
+            stderr => stderr.to_owned(),
+        };
+        anyhow::bail!("{} cannot start: {reason}", executable.display());
+    }
+    Ok(())
+}
+
+pub fn find_chrome() -> Result<PathBuf> {
+    let executable = chrome_executable()?;
+    check_chrome_starts(&executable)?;
+    Ok(executable)
+}
+
 pub fn render_html_chrome(ctx: &KvContext, data: &[u8]) -> Result<DynamicImage> {
+    render_html_chrome_with(ctx, data, find_chrome()?)
+}
+
+pub fn render_html_chrome_with(
+    ctx: &KvContext,
+    data: &[u8],
+    executable: PathBuf,
+) -> Result<DynamicImage> {
     let data_str = std::str::from_utf8(data)?;
     let url: String = if is_url_str(data_str) {
         data_str.to_owned()
@@ -375,11 +569,7 @@ pub fn render_html_chrome(ctx: &KvContext, data: &[u8]) -> Result<DynamicImage> 
     std::fs::create_dir_all(&user_data_dir)?;
     let browser = Browser::new(LaunchOptions {
         headless: true,
-        path: if cfg!(target_env = "musl") {
-            headless_chrome::browser::default_executable().ok()
-        } else {
-            None
-        },
+        path: Some(executable),
         user_data_dir: Some(user_data_dir),
         // Chrome's sandbox setup can hang indefinitely in restricted environments
         // (containers, some CI runners); disabling it is standard practice for
