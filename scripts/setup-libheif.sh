@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Downloads the prebuilt static libheif (audivir/libheif-static) for the current OS/architecture
+# Downloads the prebuilt static libheif (zshsetup/libheif-static) for the current OS/architecture
 # into vendor/libheif-static, where .cargo/config.toml points PKG_CONFIG_PATH.
 set -euo pipefail
 
@@ -30,7 +30,7 @@ if [ -f "$vendor_dir/lib/pkgconfig/libheif.pc" ]; then
   exit 0
 fi
 
-url="https://github.com/audivir/libheif-static/releases/latest/download/libheif-static-$asset.tar.gz"
+url="https://github.com/zshsetup/libheif-static/releases/latest/download/libheif-static-$asset.tar.gz"
 mkdir -p "$vendor_dir"
 echo "Downloading static libheif ($asset)..." >&2
 curl --fail-with-body -sL "$url" | tar -xz -C "$vendor_dir"
