@@ -29,10 +29,10 @@ jobs:
     strategy:
       matrix:
         include:
-          # build on the oldest supported runner to keep the glibc requirement low
-          - os: ubuntu-22.04
+          # pinned, as ubuntu-latest moves to newer glibc versions than the min_glibc of the package spec
+          - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
-          - os: ubuntu-22.04-arm
+          - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
           - os: ubuntu-latest
             target: x86_64-unknown-linux-musl
@@ -84,7 +84,7 @@ jobs:
         run: |
           max="$(objdump -T "target/${{ matrix.target }}/release/$BIN_NAME" | grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//' | sort -V | tail -1)"
           echo "Highest required glibc: $max"
-          test "$(printf '%s\n' "$max" 2.35 | sort -V | tail -1)" = 2.35
+          test "$(printf '%s\n' "$max" 2.39 | sort -V | tail -1)" = 2.39
       - name: Package binary
         shell: bash
         run: |
