@@ -118,10 +118,7 @@ pub fn has_extension_or_magic_bytes(
         .map(|ext| ext.trim_start_matches('.'))
         .collect::<Vec<_>>();
 
-    if extensions.contains(&extension) {
-        return true;
-    }
-    false
+    extensions.contains(&extension)
 }
 
 pub fn open_config() -> Result<()> {
