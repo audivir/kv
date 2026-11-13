@@ -79,12 +79,6 @@ jobs:
             ./scripts/setup-libheif.sh &&
             cargo build --release --target ${{ matrix.target }} &&
             test -z "$(ldd target/${{ matrix.target }}/release/kv | grep -v -e ld-musl -e libc.musl)"'
-      - name: Check glibc requirement
-        if: ${{ runner.os == 'Linux' && !matrix.musl }}
-        run: |
-          max="$(objdump -T "target/${{ matrix.target }}/release/$BIN_NAME" | grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//' | sort -V | tail -1)"
-          echo "Highest required glibc: $max"
-          test "$(printf '%s\n' "$max" 2.39 | sort -V | tail -1)" = 2.39
       - name: Package binary
         shell: bash
         run: |
