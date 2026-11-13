@@ -29,7 +29,8 @@ jobs:
     strategy:
       matrix:
         include:
-          - os: ubuntu-latest
+          # pinned, as ubuntu-latest moves to newer glibc versions than the min_glibc of the package spec
+          - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
