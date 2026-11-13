@@ -29,9 +29,10 @@ jobs:
     strategy:
       matrix:
         include:
-          - os: ubuntu-latest
+          # build on the oldest supported runner to keep the glibc requirement low
+          - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
-          - os: ubuntu-24.04-arm
+          - os: ubuntu-22.04-arm
             target: aarch64-unknown-linux-gnu
           - os: ubuntu-latest
             target: x86_64-unknown-linux-musl
@@ -78,6 +79,12 @@ jobs:
             ./scripts/setup-libheif.sh &&
             cargo build --release --target ${{ matrix.target }} &&
             test -z "$(ldd target/${{ matrix.target }}/release/kv | grep -v -e ld-musl -e libc.musl)"'
+      - name: Check glibc requirement
+        if: ${{ runner.os == 'Linux' && !matrix.musl }}
+        run: |
+          max="$(objdump -T "target/${{ matrix.target }}/release/$BIN_NAME" | grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//' | sort -V | tail -1)"
+          echo "Highest required glibc: $max"
+          test "$(printf '%s\n' "$max" 2.35 | sort -V | tail -1)" = 2.35
       - name: Package binary
         shell: bash
         run: |
