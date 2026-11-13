@@ -313,11 +313,17 @@ fn render_html_live(ctx: &KvContext, data: &[u8], base_dir: &Path) -> Result<Loa
     }
 }
 
-pub fn render_html_without_chrome(ctx: &KvContext, data: &[u8], base_dir: &Path) -> Result<LoadResult> {
+pub fn render_html_without_chrome(
+    ctx: &KvContext,
+    data: &[u8],
+    base_dir: &Path,
+) -> Result<LoadResult> {
     let text = String::from_utf8_lossy(data);
     let text = text.trim();
     if !is_url(text.as_bytes()) {
-        return Ok(LoadResult::Rendered(render_html_markdown(ctx, data, base_dir)?));
+        return Ok(LoadResult::Rendered(render_html_markdown(
+            ctx, data, base_dir,
+        )?));
     }
     let url = url::Url::parse(text).context("Invalid URL")?;
     let extension = Path::new(url.path())
@@ -329,7 +335,10 @@ pub fn render_html_without_chrome(ctx: &KvContext, data: &[u8], base_dir: &Path)
         let path = url
             .to_file_path()
             .map_err(|_| anyhow::anyhow!("Invalid file URL: {url}"))?;
-        (std::fs::read(&path).with_context(|| format!("Failed to read {}", path.display()))?, false)
+        (
+            std::fs::read(&path).with_context(|| format!("Failed to read {}", path.display()))?,
+            false,
+        )
     } else {
         let mut response = ureq::get(url.as_str())
             .call()
@@ -354,7 +363,9 @@ pub fn render_html_without_chrome(ctx: &KvContext, data: &[u8], base_dir: &Path)
         || head.trim_start().starts_with("<!doctype html")
         || head.trim_start().starts_with("<html");
     if looks_like_html {
-        return Ok(LoadResult::Rendered(render_html_markdown_from_url(ctx, &body, &url)?));
+        return Ok(LoadResult::Rendered(render_html_markdown_from_url(
+            ctx, &body, &url,
+        )?));
     }
     load_data(ctx, &body, &extension)
 }

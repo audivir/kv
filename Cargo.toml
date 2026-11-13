@@ -1,6 +1,6 @@
 [package]
 name = "kv"
-version = "0.3.6"
+version = "0.3.7"
 edition = "2024"
 description = "An image viewer for the Kitty Terminal Graphics Protocol"
 
@@ -17,7 +17,6 @@ bat = {
 }
 clap = { version = "4.6", features = ["derive"] }
 crossterm = "0.29"
-directories = "6.0.0"
 flate2 = "1.1"
 image = { version = "0.25", features = ["default"] }
 rayon = "1.12"
@@ -71,6 +70,9 @@ url = "2"
 
 [dev-dependencies]
 rstest = "0.26.1"
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+directories = "6.0.0"
 
 [profile.release]
 debug = false
