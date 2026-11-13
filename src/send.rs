@@ -23,11 +23,39 @@ pub enum PrinterInput {
     Data(Vec<u8>),
 }
 
+/// Terminal height in rows and pixels, used to derive the cell height.
+pub type TermCells = (u32, u32);
+
+/// Reads the terminal height as (rows, pixels), if the terminal reports it.
+fn terminal_cells() -> Option<TermCells> {
+    let size = crossterm::terminal::window_size().ok()?;
+    (size.rows > 0 && size.height > 0).then_some((size.rows as u32, size.height as u32))
+}
+
+/// Returns the number of terminal rows covered by an image of the given pixel height.
+fn image_rows(height: u32, (rows, px_height): TermCells) -> u32 {
+    let cell_h = px_height as f64 / rows as f64;
+    ((height as f64 / cell_h).ceil() as u32).max(1)
+}
+
 pub fn send_image(
     writer: &mut dyn Write,
     img: DynamicImage,
     output: Option<String>,
     mode: Mode,
+) -> Result<()> {
+    send_image_with_cells(writer, img, output, mode, terminal_cells())
+}
+
+/// Sends an image to the terminal, using `cells` to place the cursor below the image.
+///
+/// Without `cells`, the terminal moves the cursor itself and a single newline is written.
+pub fn send_image_with_cells(
+    writer: &mut dyn Write,
+    img: DynamicImage,
+    output: Option<String>,
+    mode: Mode,
+    cells: Option<TermCells>,
 ) -> Result<()> {
     let payload = match mode {
         Mode::Png => {
@@ -60,10 +88,20 @@ pub fn send_image(
     // Png: a=T,f=100
     // Raw: a=T,f=32,s={w},v={h} (+ o=z if zlib)
     let (width, height) = img.dimensions();
+    // with C=1 the terminal keeps the cursor in place and the newlines below move it past
+    // the image.
+    // for tall images r= pins the row count, so the terminal and the newline count cannot
+    // disagree when the reported pixel height includes padding.
+    let rows = cells.map(|c| image_rows(height, c));
+    let cursor = match rows {
+        Some(rows) if rows >= 8 => format!(",C=1,r={rows}"),
+        Some(_) => ",C=1".to_string(),
+        None => String::new(),
+    };
     let header = match mode {
-        Mode::Png => "a=T,f=100".to_string(),
-        Mode::Zlib => format!("a=T,f=32,s={},v={},o=z", width, height),
-        Mode::Raw => format!("a=T,f=32,s={},v={}", width, height),
+        Mode::Png => format!("a=T,f=100{cursor}"),
+        Mode::Zlib => format!("a=T,f=32,s={},v={},o=z{cursor}", width, height),
+        Mode::Raw => format!("a=T,f=32,s={},v={}{cursor}", width, height),
     };
 
     let total_len = payload.len();
@@ -99,8 +137,11 @@ pub fn send_image(
         offset = end;
     }
 
-    // ensure terminal is clean
-    writeln!(writer)?;
+    // the cursor movement of the terminal does not scroll reliably for images taller than
+    // the viewport (seen in Ghostty), so the newlines are written here.
+    for _ in 0..rows.unwrap_or(1) {
+        writeln!(writer)?;
+    }
     writer.flush()?;
 
     Ok(())
